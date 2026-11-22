@@ -22,8 +22,8 @@ A piece of software is a good candidate for a SpecPack if it is
 **regenerable**:
 
 - buildable in **< 3 days** of agent-assisted work, **or**
-- **< 100 conversations** (≈100 rounds of communication each) with an agent, **or**
-- **< 1B tokens** total build cost.
+- **< 50 conversations** (≈20–50 rounds of communication each) with an agent, **or**
+- **< 50M tokens** total build cost.
 
 Below that threshold, implementation is a commodity and the specification
 *is* the product. Above it (data, network effects, trust, payments, ongoing
@@ -36,12 +36,12 @@ code too.
 my-pack/
   pack.yaml       # manifest: name, version, regenerability budget, scores
   SKILL.md        # how an agent should load and build this
-  spec.md         # numbered acceptance criteria (EARS or Given/When/Then)
+  spec.md         # bracketed acceptance criteria ([1.1] EARS / Given-When-Then)
   decisions.md    # key decisions, alternatives rejected, dead ends, taste calls
   examples/       # input -> expected output fixtures
-  golden/         # approved screenshots / golden outputs
-  tests/          # executable acceptance tests (.feature, Playwright, ...)
-  eval.md         # how parity is scored
+  golden/         # human-approved visual references & normalized output goldens
+  tests/          # executable contract tests (.feature, pytest, Playwright, ...)
+  eval.md         # how parity is scored (contract checks vs. personalisation)
 ```
 
 No single existing standard bundles all of this:
@@ -51,11 +51,14 @@ No single existing standard bundles all of this:
 - **Golden / approval testing:** golden files, Jest/insta snapshots, and
   Playwright `toHaveScreenshot()` cover "approved output" for code that
   already exists.
-- **SpecPack adds the missing piece:** an `eval` that a *rebuilding* agent
-  runs cold, reporting parity %, tokens, time, and rounds — so a pack is
-  reproducible and *scored*, not just documented.
+- **SpecPack adds the missing piece:** executable **contract tests** separated
+  from optional **visual reference goldens** (so personalising UI doesn't break
+  parity), paired with `eval/validate.py` and `eval/score.py` so a rebuilding
+  agent is scored from real test evidence rather than prose.
 
-See [FORMAT.md](FORMAT.md) for the v0.1 format.
+See [FORMAT.md](FORMAT.md), the [validator](eval/validate.py), the
+[JUnit/JSON scorer](eval/score.py), and the
+[pack harvester skill](skills/harvest-specpack/SKILL.md).
 
 ## The experiment
 

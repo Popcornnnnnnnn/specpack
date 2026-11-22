@@ -17,9 +17,10 @@ software?
    revise the pack and re-run as a new run.
 
 ## Record for every run (append to RESULTS.md)
-Harness, model, date, operator, wall time, conversations and rounds,
+Prefer feeding JUnit XML test results into `eval/score.py` (`python3 eval/score.py --junit results.xml --spec <pack>/spec.md --json-out run-report.json`) so every criterion ID is backed by an executed contract test rather than self-reported JSON alone.
+Record: Harness, model, date, operator, wall time, conversations and rounds,
 tokens in/out/total, parity % (total and per requirement area), failed
-criterion IDs, pack gaps found, personalisation choices.
+criterion IDs, unverified criterion IDs, pack gaps found, personalisation choices.
 
 ## Interpretation
 - **>= 90% parity:** pack is sufficient; differences are personalisation.

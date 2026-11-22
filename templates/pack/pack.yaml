@@ -3,7 +3,7 @@ version: 0.1.0
 description: ""
 regenerability:
   budget_days: 3
-  budget_conversations: 100
-  budget_tokens: 1000000000
+  budget_conversations: 50
+  budget_tokens: 50000000
   measured: []
 license: MIT

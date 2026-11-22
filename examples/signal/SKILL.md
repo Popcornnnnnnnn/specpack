@@ -1,6 +1,6 @@
 ---
-name: my-pack
-description: Build your own version of <thing>. Load this pack, follow spec.md, personalise where marked.
+name: signal-digest
+description: Build your own daily tech and open-source digest (Signal Digest stub). Follow spec.md and personalise where marked.
 ---
 
 # How to build this
