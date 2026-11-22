@@ -28,11 +28,15 @@ From git history, issues, PRs, and session memories, separate:
 - **`## Taste calls`**: one creator's intentional UX/density stances shared as inspiration.
 
 ## 5. Write the Personalisation Interview (`SKILL.md` + `reference/`)
-- Author **3–5 concrete questions** in `SKILL.md` that a rebuilding agent asks *before coding*:
-  - Which surface fits the user (menu bar, Web dashboard, Raycast, TUI, mobile companion)?
-  - Which visual vibe and density feel right?
-  - Which extras to add or drop?
-  - Which language/stack they prefer on their machine?
+- Author a lightweight `/grill-me`-style **Guided Taste Interview** in `SKILL.md` that a rebuilding agent runs *before coding*:
+  - Instruct the agent to ask **one high-level product/UX question at a time** (2–4 plain choices, one `(Recommended)` default, `"just use defaults"` fast path always honored).
+  - Include **dynamic branching rules** so irrelevant follow-ups are skipped (for instance, skipping GUI styling/density when the user picks a TUI or command launcher).
+  - Focus strictly on taste and product shape:
+    - Which surface fits the user (menu bar/tray, Web dashboard, TUI, command launcher)?
+    - Which mental model / layout fits how they work?
+    - Which visual vibe and density feel right *(when graphical)*?
+    - Which personal workflow extras to include or keep minimal?
+  - Explicitly forbid low-level plumbing questions (languages, sockets, schemas, timeouts) in the interview — the builder chooses those internally unless asked.
 - Put human-approved screenshots/demos of your build into `reference/` with brief captions explaining taste choices — explicitly labeled as inspiration, never a pixel gate.
 
 ## 6. Build Surface-Independent Verification (`examples/` & `tests/`)

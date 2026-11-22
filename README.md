@@ -45,11 +45,12 @@ my-pack/
 Only **`spec.md` (Core Invariants + Non-goals)** is a strict contract:
 - `decisions.md` shares traps you hit and choices you made *as advice*, not orders.
 - `reference/` shows one author's taste as a moodboard, never a pixel gate.
-- `SKILL.md` interviews the user *before coding* so the rebuild fits them.
+- `SKILL.md` runs a lightweight `/grill-me`-style **Guided Taste Interview** *before coding* — one product/UX question at a time with recommended defaults and zero plumbing jargon — so the rebuild fits how the user wants to work.
 
 See [FORMAT.md](FORMAT.md), the [validator](eval/validate.py), the
-[JUnit/JSON scorer](eval/score.py), and the
-[pack harvester skill](skills/harvest-specpack/SKILL.md).
+[JUnit/JSON scorer](eval/score.py), the
+[pack harvester skill](skills/harvest-specpack/SKILL.md), and the reference packs
+([Port Tools](examples/port-tools/) and [Signal](examples/signal/)).
 
 ## The experiment
 
@@ -75,7 +76,7 @@ Protocol and results log: [experiment/](experiment/)
 
 ## Status
 
-**v0.2** — reworked around freedom by default (`spec.md` core invariants, advisory `decisions.md`, `SKILL.md` personalisation interview, `reference/` moodboard), backed by `eval/validate.py` and `eval/score.py`. Ready to harvest the first real reference pack.
+**v0.2** — reworked around freedom by default (`spec.md` core invariants, advisory `decisions.md`, `SKILL.md` one-question-at-a-time Guided Taste Interview, `reference/` moodboard), backed by `eval/validate.py` and `eval/score.py`. Includes **[Port Tools](examples/port-tools/)** (first full harvested UI-heavy reference pack) alongside **[Signal](examples/signal/)**.
 
 ## License
 

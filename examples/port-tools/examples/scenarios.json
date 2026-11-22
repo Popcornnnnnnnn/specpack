@@ -1,0 +1,124 @@
+{
+  "pack": "port-tools",
+  "format_version": "0.2",
+  "scenarios": [
+    {
+      "id": "S-1.1",
+      "criteria": ["1.1"],
+      "name": "Discover current-user IPv4 and IPv6 listeners without port allowlists",
+      "setup": "Two dev servers owned by current user: HTTP on 127.0.0.1:41937 (uncommon high port) and Vite-style dev server on [::1]:5173, plus a wildcard server on 0.0.0.0:8088.",
+      "expected": {
+        "all_ports_present": true,
+        "bind_scope_recorded": {
+          "41937": "loopback",
+          "5173": "loopback",
+          "8088": "wildcard"
+        },
+        "silent_empty_on_inspector_error": false
+      }
+    },
+    {
+      "id": "S-1.2",
+      "criteria": ["1.2", "1.3"],
+      "name": "Separate openable HTML Web UIs from Swagger/OpenAPI, Chrome DevTools, JSON APIs, and raw TCP",
+      "setup": "Five local listeners: (a) attributed HTML Web UI in a Git repo, (b) /docs Swagger HTML stub, (c) Chromium /json/version endpoint, (d) unattributed JSON API, (e) raw TCP echo socket.",
+      "expected": {
+        "html_web_ui_in_primary": true,
+        "swagger_promoted_to_web_ui": false,
+        "devtools_promoted_to_web_ui": false,
+        "unattributed_http_section": "other_web",
+        "raw_tcp_section": "other_listeners"
+      }
+    },
+    {
+      "id": "S-2.1",
+      "criteria": ["2.1"],
+      "name": "Attribute owning project cleanly and strip Git remote credentials",
+      "setup": "Node/Python app started from repo subdir with embedded credential remote URL https://user:secret-token@github.com/acme/demo-app.git and runtime files under node_modules / .venv/site-packages.",
+      "expected": {
+        "project_root": "repo_root",
+        "excluded_toolchain_roots": ["node_modules", "site-packages"],
+        "remote_normalized": "github.com/acme/demo-app",
+        "contains_secret_token": false
+      }
+    },
+    {
+      "id": "S-2.2",
+      "criteria": ["2.2"],
+      "name": "Keep distinct Git worktrees separated",
+      "setup": "Main checkout on branch main running app A on port 3101; linked git worktree on feat/proxy running app A copy on port 3102.",
+      "expected": {
+        "distinct_workspace_groups": 2,
+        "branches": ["main", "feat/proxy"]
+      }
+    },
+    {
+      "id": "S-2.3",
+      "criteria": ["2.3", "4.2"],
+      "name": "Attribute host-published Docker listener to container metadata and refuse daemon kill",
+      "setup": "Host port 54321 published by container runtime (com.docker.backend / dockerd / docker-proxy) backed by postgres:16 container.",
+      "expected": {
+        "container_metadata_present": true,
+        "stop_eligible": false,
+        "refusal_mentions_container": true
+      }
+    },
+    {
+      "id": "S-3.1",
+      "criteria": ["3.1"],
+      "name": "Reverse proxy HTTP, WebSocket upgrade, SSE streaming, and IPv6-only upstreams over *.localhost",
+      "setup": "Aliased web-ipv6.localhost -> [::1]:{p1} (HTML + SSE) and web-ws.localhost -> 127.0.0.1:{p2} (WebSocket echo), reached via loopback proxy Host header (case-insensitive with :port suffix).",
+      "expected": {
+        "http_200_ok": true,
+        "websocket_101_echo_ok": true,
+        "sse_chunk_stream_ok": true,
+        "hosts_or_ca_modified": false
+      }
+    },
+    {
+      "id": "S-3.2",
+      "criteria": ["3.2"],
+      "name": "Rebind alias across port/PID restart and reject alias collisions",
+      "setup": "Assign alias 'web' to app A on port 4001. Restart app A on new PID and port 4002 under same project/worktree identity. Attempt to assign 'web' to a second distinct worktree app B.",
+      "expected": {
+        "app_a_rebound_to_4002": true,
+        "collision_rejected_for_app_b": true
+      }
+    },
+    {
+      "id": "S-3.3",
+      "criteria": ["3.3"],
+      "name": "Return missing-upstream diagnostic and preserve corrupt route state",
+      "setup": "Stop aliased upstream cleanly and request http://web.localhost:{proxy_port}/; also corrupt routes JSON on disk and initialize store.",
+      "expected": {
+        "missing_upstream_status": 502,
+        "missing_upstream_identifies_alias": true,
+        "corrupt_backup_created": true
+      }
+    },
+    {
+      "id": "S-4.1",
+      "criteria": ["4.1"],
+      "name": "Conservative possibly forgotten heuristic without auto-kill or unused wording",
+      "setup": "Active detached daemon running under PPID=1 with recent activity vs truly idle long-lived server with conservative staleness signals.",
+      "expected": {
+        "active_ppid1_flagged": false,
+        "stale_label_if_flagged": "possibly forgotten",
+        "uses_word_unused": false,
+        "evidence_shown": true,
+        "auto_killed": false
+      }
+    },
+    {
+      "id": "S-4.2",
+      "criteria": ["4.2", "4.3"],
+      "name": "Atomic identity revalidation, port-release verification, and two-step SIGKILL escalation",
+      "setup": "Obtain stop plan token for fixture process A, swap/simulate mismatched PID identity -> confirm stop refuses; obtain valid plan token for graceful process B -> confirm SIGTERM waits and verifies port closes; attempt stop on SIGTERM-ignoring process C -> confirm timeout notice and separate force SIGKILL step.",
+      "expected": {
+        "stale_mismatched_token_refused": true,
+        "graceful_stop_verifies_port_closed": true,
+        "sigkill_requires_explicit_second_step": true
+      }
+    }
+  ]
+}

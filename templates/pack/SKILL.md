@@ -7,10 +7,10 @@ description: Build your own version of <thing> protecting core invariants while 
 
 1. **Read `spec.md` strictly.** Its non-goals and ~5–15 bracketed invariants (`[1.1]`, ...) are the only locked contract.
 2. **Read `decisions.md` as field notes, not orders.** Reuse what fits; replace reference choices freely if your version works better a different way, while avoiding listed dead ends.
-3. **Run the Personalisation Interview before writing code.** Ask the human (or record defaults if they delegate) before designing the build:
-   - **Surface & form factor:** <e.g. menu bar app / local web dashboard / TUI / Raycast extension>
-   - **Visual taste & density:** <e.g. Linear minimal / Glass / compact developer table / cards>
-   - **Workflows to add or drop:** <any extra actions or shortcuts tailored to the user>
-   - **Preferred tech stack:** <any stack that builds cleanly on their machine>
+3. **Run a lightweight `/grill-me`-style Guided Taste Interview before writing code.** Walk through the **Personalisation Interview** **one high-level product/UX question at a time** — give 2–4 plain-language options with one `(Recommended)` choice, honor `"just use defaults"` at any point, skip questions made irrelevant by earlier answers, and never ask about low-level plumbing (languages, sockets, schemas, timeouts) unless the human asks:
+   - **Surface & form factor:** <e.g. menu bar app (Recommended) / local web dashboard / TUI / command launcher>
+   - **Primary mental model:** <e.g. project-first workspace view (Recommended) / triage queue / search-first launcher>
+   - **Visual vibe & density *(skip if TUI / headless)*:** <e.g. quiet native / crisp Linear minimal (Recommended) / dense developer table>
+   - **Optional personal extras:** <any extra shortcuts or workflow tweaks tailored to the user, or keep minimal (Recommended)>
 4. **Glance at `reference/` only as inspiration.** One author's screenshots are a moodboard, never a layout target.
 5. **Run `eval.md` checks** and report: chosen surface/style, `Invariants %`, tokens, wall time, rounds, and any failed/unverified invariant IDs.

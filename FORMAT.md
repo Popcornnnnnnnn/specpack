@@ -50,7 +50,11 @@ license: MIT
 Entry point for the rebuilding agent.
 - YAML frontmatter `name:` MUST match `pack.yaml` `name:`.
 - Must teach **freedom by default**: obey `spec.md` invariants & non-goals strictly; treat `decisions.md` and `reference/` strictly as advice and inspiration.
-- MUST include a **Personalisation Interview** (3–5 short questions the agent asks the human *before writing code* — e.g. preferred surface/form factor, visual vibe/density, core extras to add or drop, target stack — recording answers if the human delegates choice).
+- MUST include a **Personalisation Interview** structured as a lightweight, `/grill-me`-style **Guided Taste Interview** *before writing code*:
+  - Ask **one high-level product/UX question at a time** (surface/form factor, primary mental model, visual vibe & density, personal workflow extras), never a multi-question form dump.
+  - Give 2–4 crisp options per question with one marked `(Recommended)` and honor a `"just use defaults"` fast path at any turn.
+  - **Branch dynamically:** skip follow-up questions rendered irrelevant by earlier answers (for example, skip GUI styling/density when the user picks a TUI or command launcher).
+  - **Keep plumbing out of the interview:** do not ask about sockets, languages, timeouts, schemas, or internal protocols unless the human brings them up — record sensible engineering choices internally.
 
 ### `reference/` (replaces `golden/` from v0.1)
 Screenshots, GIFs, or sample exports of **one creator's version**, labeled as inspiration/moodboard rather than a target to replicate. Never fail a rebuild because it chose a different layout or aesthetic.

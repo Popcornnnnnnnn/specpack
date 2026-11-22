@@ -1,0 +1,10 @@
+name: port-tools
+format_version: "0.2"
+version: 1.0.0
+description: Calm local-port awareness, project/worktree attribution, stable *.localhost routing, and safe two-step listener stop review.
+regenerability:
+  budget_days: 3
+  budget_conversations: 40
+  budget_tokens: 40000000
+  measured: []
+license: MIT

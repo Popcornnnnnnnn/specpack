@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from eval import score, validate
+from eval import _common, score, validate
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -321,6 +321,30 @@ class TestValidate(unittest.TestCase):
     def test_repo_templates_and_signal_validate_without_errors(self) -> None:
         for rel in ("templates/pack", "examples/signal"):
             self.assertEqual(validate.main([str(REPO_ROOT / rel)]), 0, rel)
+
+    def test_port_tools_pack_validates_strict_and_harness_runs(self) -> None:
+        pack = REPO_ROOT / "examples/port-tools"
+        self.assertEqual(validate.main([str(pack), "--strict"]), 0)
+
+        spec_ids, duplicates = _common.extract_criterion_ids(pack / "spec.md")
+        self.assertEqual(duplicates, [])
+        self.assertEqual(len(spec_ids), 12)
+
+        scenarios_data = json.loads((pack / "examples/scenarios.json").read_text(encoding="utf-8"))
+        covered = set()
+        for scenario in scenarios_data["scenarios"]:
+            covered.update(scenario["criteria"])
+        self.assertEqual(covered, set(spec_ids))
+
+        harness = pack / "tests/contract_harness.py"
+        compile(harness.read_text(encoding="utf-8"), str(harness), "exec")
+        proc = subprocess.run(
+            [sys.executable, str(harness), "--self-test"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
 
 if __name__ == "__main__":
