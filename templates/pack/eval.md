@@ -1,30 +1,28 @@
-# Eval — how parity is scored
+# Eval — verifying invariants & personalisation
 
 ## Command
-Run the contract test suite and emit JUnit XML, then score against `spec.md`:
+Run the invariant test suite against your chosen implementation and emit JUnit XML, then score against `spec.md`:
 `<exact command that runs tests/ and writes results.xml>`
 
 ```bash
-python3 eval/score.py --junit results.xml --spec spec.md --json-out run-report.json
+python3 eval/score.py --junit results.xml --spec spec.md --surface "<chosen-surface>" --json-out run-report.json
 ```
 
-## Scoring
-- Parity % = passed acceptance criteria / total criteria in `spec.md` (criteria with zero executed tests count as failed/unverified).
-- Report per requirement area, plus a total.
-- **Deterministic outputs** (JSON/CLI/text goldens): mask timestamps, UUIDs, and dates before comparing.
-- **Visual screenshots** in `golden/`: treat as style references whenever UI/theme is marked as a personalisation point in `SKILL.md`; use strict pixel diffs only on explicitly locked screens.
-
-## Allowed personalisation (not drift)
-- <listed in SKILL.md>
+## Scoring & Verification
+- **`Invariants %`:** passed core invariants / total invariants in `spec.md` (criteria with zero executed or skipped tests count as failed/unverified).
+- Report per requirement area, plus total.
+- **`examples/` & `reference/`:** verify deterministic domain fixtures strictly after masking timestamps/UUIDs; treat visual files in `reference/` strictly as **inspiration** so customised UI never counts as drift.
+- **Personalisation check:** confirm each answer from the `SKILL.md` Personalisation Interview works end-to-end in the rebuilt app.
 
 ## Run report (required)
 | Field | Value |
 |---|---|
 | Harness | |
 | Model | |
+| Chosen surface / style | |
 | Wall time | |
 | Conversations / rounds | |
 | Tokens (in/out, total) | |
-| Parity % | |
-| Failed criteria (IDs) | |
+| Invariants % | |
+| Failed / unverified IDs | |
 | Personalisation choices made | |

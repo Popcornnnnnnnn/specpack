@@ -1,5 +1,5 @@
 # Rebuild Results
 
-| # | Date | Pack | Harness | Model | Wall time | Convs/Rounds | Tokens | Parity % | Failed criteria | Notes |
-|---|------|------|---------|-------|-----------|--------------|--------|----------|-----------------|-------|
-| - | -    | -    | -       | -     | -         | -            | -      | -        | -               | No runs yet. |
+| # | Date | Pack | Harness | Model | Surface / Style | Wall time | Convs/Rounds | Tokens | Invariants % | Failed criteria | Notes |
+|---|------|------|---------|-------|-----------------|-----------|--------------|--------|--------------|-----------------|-------|
+| - | -    | -    | -       | -     | -               | -         | -            | -      | -            | -               | No runs yet. |

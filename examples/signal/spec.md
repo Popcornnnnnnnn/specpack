@@ -1,19 +1,21 @@
-# <Name> — Specification
+# <Name> — Core Invariants
 
-## Introduction
-<One or two paragraphs: what, for whom, why.>
+Keep this file compact (~5–15 non-negotiable truths). Do NOT lock stack, layout, colors, or UI surface here.
+
+## Problem & Intent
+<One or two paragraphs: what core problem Signal Digest solves, for whom, and what remains true across any rebuild.>
 
 ## Non-goals
-- <What this deliberately does NOT do.>
+- <What rebuilt versions MUST deliberately refuse or stay clear of.>
 
-## Requirements
+## Core Invariants
 
 ### Requirement 1: <title>
-**User Story:** As a <role>, I want <feature>, so that <benefit>.
+**Intent:** <Why this invariant exists.>
 
 #### Acceptance Criteria
-- [1.1] WHEN <event> THEN the system SHALL <response>
-- [1.2] IF <precondition> THEN the system SHALL <response>
+- [1.1] WHEN <event> THEN the system SHALL <invariant>
+- [1.2] IF <precondition> THEN the system SHALL <invariant>
 
 ## Measurable success
-- <Numbers, not adjectives.>
+- <Numbers, deduplication/provenance guarantees, not adjectives.>

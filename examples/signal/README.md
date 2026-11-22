@@ -1,9 +1,8 @@
 # Example pack (stub): Signal Digest
 
-A personal daily digest: collect tech & open-source updates, review them,
-and publish a small site / send a daily summary.
+A personal daily digest: collect tech & open-source updates, triage them,
+and deliver your own version (web reader, static newsletter, daily summary
+bot, or desktop sidebar).
 
-Status: **stub** — structure only. To be filled in from a real build
-(capture spec, goldens, tests and decisions as a byproduct of building it),
-then used for the first cross-harness rebuild runs.
-See ../../experiment/PROTOCOL.md.
+Status: **stub (SpecPack v0.2)** — structure only, awaiting a real build &
+harvest run (`examples/`, `reference/`, `tests/`). See `../../experiment/PROTOCOL.md`.

@@ -1,5 +1,5 @@
-import io
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -13,13 +13,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 def _write_clean_pack(pack_dir: Path) -> None:
     pack_dir.mkdir(parents=True, exist_ok=True)
-    for sub in ("examples", "golden", "tests"):
+    for sub in ("examples", "reference", "tests"):
         (pack_dir / sub).mkdir(exist_ok=True)
 
     (pack_dir / "pack.yaml").write_text(
         "\n".join(
             [
                 "name: demo-pack",
+                'format_version: "0.2"',
                 "version: 0.1.0",
                 "description: Small deterministic demo pack for validator tests.",
                 "regenerability:",
@@ -41,9 +42,11 @@ def _write_clean_pack(pack_dir: Path) -> None:
                 "description: Build your own version of Demo Pack following spec.md.",
                 "---",
                 "",
-                "# Build Instructions",
+                "# Build Instructions (Freedom by Default)",
                 "",
-                "Read `spec.md` then `decisions.md`. Comparison checks allow < 50M tokens and <https://example.com>.",
+                "Read `spec.md` invariants strictly, then `decisions.md` as advisory field notes.",
+                "Run a short Personalisation Interview (chosen surface, style) before coding.",
+                "Budgets allow < 50M tokens and links like <https://example.com>.",
                 "",
             ]
         ),
@@ -52,15 +55,15 @@ def _write_clean_pack(pack_dir: Path) -> None:
     (pack_dir / "spec.md").write_text(
         "\n".join(
             [
-                "# Demo Pack — Specification",
+                "# Demo Pack — Core Invariants",
                 "",
-                "## Introduction",
+                "## Problem & Intent",
                 "Deterministic parser specification.",
                 "",
                 "## Non-goals",
                 "- No live network fetches.",
                 "",
-                "## Requirements",
+                "## Core Invariants",
                 "",
                 "### Requirement 1: Parsing",
                 "- [1.1] WHEN valid input arrives THEN the system SHALL emit normalized JSON.",
@@ -78,7 +81,7 @@ def _write_clean_pack(pack_dir: Path) -> None:
                 "- [1.10] WHEN input is empty THEN the system SHALL emit an empty array.",
                 "",
                 "## Measurable success",
-                "- 100% parity on contract tests.",
+                "- 100% invariant coverage on scenario tests.",
                 "",
             ]
         ),
@@ -87,14 +90,15 @@ def _write_clean_pack(pack_dir: Path) -> None:
     (pack_dir / "decisions.md").write_text(
         "\n".join(
             [
-                "# Decisions",
+                "# Field Notes & Advice",
                 "",
-                "## Decision 1: Stdlib-only parser",
-                "- **Choice:** Pure Python stdlib.",
-                "- **Rationale:** Zero dependency setup.",
-                "- **Alternatives considered:** Third-party parser.",
+                "## Reference choices (advisory)",
+                "### Choice 1: Stdlib-only parser",
+                "- **What the reference build picked:** Pure Python stdlib.",
+                "- **Why:** Zero dependency setup.",
+                "- **Clean alternatives:** Any typed parser.",
                 "",
-                "## Dead ends",
+                "## Dead ends & traps",
                 "- Avoid regex-only line splitting on nested records.",
                 "",
                 "## Taste calls",
@@ -111,7 +115,7 @@ def _write_clean_pack(pack_dir: Path) -> None:
 
 
 class TestScore(unittest.TestCase):
-    def test_json_report_numeric_sorting(self) -> None:
+    def test_json_report_numeric_sorting_and_surface(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             report_path = Path(tmp) / "run-report.json"
             report_path.write_text(
@@ -119,6 +123,7 @@ class TestScore(unittest.TestCase):
                     {
                         "harness": "codex",
                         "model": "test-model",
+                        "surface": "TUI (Ratatui)",
                         "tokens": 12000,
                         "rounds": 4,
                         "criteria": {
@@ -145,7 +150,8 @@ class TestScore(unittest.TestCase):
                 [line.split(":")[0] for line in req_lines],
                 ["Requirement 1", "Requirement 2", "Requirement 10"],
             )
-            self.assertIn("PARITY: 2/5 = 40.0%", proc.stdout)
+            self.assertIn("Surface: TUI (Ratatui)", proc.stdout)
+            self.assertIn("INVARIANTS: 2/5 = 40.0%", proc.stdout)
             self.assertIn("Failed criteria: 1.1, 1.10, 2.1", proc.stdout)
 
     def test_junit_scoring_boundary_and_states(self) -> None:
@@ -190,7 +196,6 @@ class TestScore(unittest.TestCase):
             self.assertFalse(criteria["2.1"])
             self.assertFalse(criteria["10.1"])
 
-            buf = io.StringIO()
             rc = score.main(
                 [
                     "--junit",
@@ -201,6 +206,8 @@ class TestScore(unittest.TestCase):
                     "codex",
                     "--model",
                     "gpt",
+                    "--surface",
+                    "Web Dashboard (React)",
                     "--tokens",
                     "50000",
                     "--rounds",
@@ -211,12 +218,12 @@ class TestScore(unittest.TestCase):
             )
             self.assertEqual(rc, 0)
             scored = json.loads(out_json.read_text(encoding="utf-8"))
-            self.assertEqual(scored["parity_percent"], 40.0)
+            self.assertEqual(scored["surface"], "Web Dashboard (React)")
+            self.assertEqual(scored["invariants_percent"], 40.0)
             self.assertEqual(scored["passed"], 2)
             self.assertEqual(scored["total"], 5)
             self.assertEqual(scored["unverified"], ["1.1"])
             self.assertEqual(scored["failed"], ["1.1", "2.1", "10.1"])
-            _ = buf
 
     def test_junit_requires_spec_flag(self) -> None:
         proc = subprocess.run(
@@ -239,6 +246,32 @@ class TestValidate(unittest.TestCase):
             self.assertEqual(count, 5)
             self.assertEqual(validate.main([str(pack), "--strict"]), 0)
 
+    def test_legacy_golden_dir_warns_not_fails_non_strict(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pack = Path(tmp) / "pack"
+            _write_clean_pack(pack)
+            shutil.rmtree(pack / "reference")
+            (pack / "golden").mkdir()
+            errors, warnings, _ = validate.validate_pack(pack)
+            self.assertEqual(errors, [])
+            self.assertTrue(any("legacy 'golden/'" in w for w in warnings))
+            self.assertEqual(validate.main([str(pack)]), 0)
+            self.assertEqual(validate.main([str(pack), "--strict"]), 1)
+
+    def test_missing_personalisation_prompt_warns_and_fails_strict(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pack = Path(tmp) / "pack"
+            _write_clean_pack(pack)
+            (pack / "SKILL.md").write_text(
+                "---\nname: demo-pack\ndescription: Short guide.\n---\n\nFollow spec.md.\n",
+                encoding="utf-8",
+            )
+            errors, warnings, _ = validate.validate_pack(pack)
+            self.assertEqual(errors, [])
+            self.assertTrue(any("personalisation interview" in w for w in warnings))
+            self.assertEqual(validate.main([str(pack)]), 0)
+            self.assertEqual(validate.main([str(pack), "--strict"]), 1)
+
     def test_missing_required_file_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             pack = Path(tmp) / "pack"
@@ -253,7 +286,7 @@ class TestValidate(unittest.TestCase):
             pack = Path(tmp) / "pack"
             _write_clean_pack(pack)
             (pack / "SKILL.md").write_text(
-                "---\nname: wrong-name\ndescription: Mismatch.\n---\n",
+                "---\nname: wrong-name\ndescription: Mismatch.\n---\n\nPersonalisation options.\n",
                 encoding="utf-8",
             )
             errors, _, _ = validate.validate_pack(pack)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a SpecPack directory for structure, manifest, frontmatter, and criteria."""
+"""Validate a SpecPack directory for structure, manifest, frontmatter, personalisation, and invariants."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ except ImportError:
     from _common import extract_criterion_ids, strip_fenced_code_blocks
 
 REQUIRED_FILES = ("pack.yaml", "SKILL.md", "spec.md", "decisions.md")
-RECOMMENDED_PATHS = ("eval.md", "tests", "examples", "golden")
+RECOMMENDED_PATHS = ("eval.md", "tests", "examples")
 PLACEHOLDER_SCAN_FILES = ("SKILL.md", "spec.md", "decisions.md", "eval.md")
 PLACEHOLDER_RE = re.compile(r"(?<!<)<([A-Za-z][A-Za-z0-9 .,/:'\"()_-]{0,79})>(?!>)")
 
@@ -119,6 +119,14 @@ def validate_pack(pack_dir: Path) -> tuple[list[str], list[str], int]:
         if not (pack_dir / rel).exists():
             warnings.append(f"Missing recommended path: {rel}")
 
+    if not (pack_dir / "reference").exists():
+        if (pack_dir / "golden").exists():
+            warnings.append(
+                "Found legacy 'golden/'; prefer 'reference/' in SpecPack v0.2 so screenshots stay inspiration rather than pixel targets."
+            )
+        else:
+            warnings.append("Missing recommended path: reference")
+
     pack_yaml_path = pack_dir / "pack.yaml"
     pack_name = ""
     if pack_yaml_path.is_file():
@@ -140,6 +148,7 @@ def validate_pack(pack_dir: Path) -> tuple[list[str], list[str], int]:
 
     skill_path = pack_dir / "SKILL.md"
     if skill_path.is_file():
+        skill_text = skill_path.read_text(encoding="utf-8")
         meta, fm_errors = _parse_frontmatter(skill_path)
         errors.extend(fm_errors)
         if meta is not None:
@@ -152,6 +161,11 @@ def validate_pack(pack_dir: Path) -> tuple[list[str], list[str], int]:
                 )
             if not meta.get("description"):
                 warnings.append("SKILL.md frontmatter is missing 'description'.")
+        lowered_skill = skill_text.lower()
+        if "personalisation" not in lowered_skill and "personalization" not in lowered_skill:
+            warnings.append(
+                "SKILL.md should define a personalisation interview or personalisation points so rebuilds fit each user."
+            )
 
     spec_path = pack_dir / "spec.md"
     if spec_path.is_file():

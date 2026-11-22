@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SpecPack parity scorer supporting JSON reports and JUnit XML evidence."""
+"""SpecPack invariants scorer supporting JSON reports and JUnit XML evidence."""
 
 from __future__ import annotations
 
@@ -22,12 +22,13 @@ def score_criteria_map(
     *,
     harness: str = "?",
     model: str = "?",
+    surface: str = "",
     tokens: object = "?",
     rounds: object = "?",
     unverified: Optional[list[str]] = None,
     out_stream=None,
 ) -> tuple[dict[str, object], int]:
-    """Compute per-area and total parity and print a formatted summary."""
+    """Compute per-area and total invariant satisfaction and print a formatted summary."""
     stream = out_stream or sys.stdout
     if not criteria:
         print("no criteria to score", file=stream)
@@ -41,14 +42,16 @@ def score_criteria_map(
 
     total_ok = sum(v[0] for v in areas.values())
     total = sum(v[1] for v in areas.values())
-    parity = 100.0 * total_ok / total if total else 0.0
+    pct = 100.0 * total_ok / total if total else 0.0
 
     print(f"Harness: {harness}  Model: {model}", file=stream)
+    if surface:
+        print(f"Surface: {surface}", file=stream)
     print(f"Tokens: {tokens}  Rounds: {rounds}", file=stream)
     for area in sorted(areas, key=natural_id_key):
         ok, count = areas[area]
         print(f"  Requirement {area}: {ok}/{count} = {100.0 * ok / count:.0f}%", file=stream)
-    print(f"PARITY: {total_ok}/{total} = {parity:.1f}%", file=stream)
+    print(f"INVARIANTS: {total_ok}/{total} = {pct:.1f}%", file=stream)
 
     failed = sorted((c for c, ok in criteria.items() if not ok), key=natural_id_key)
     if failed:
@@ -60,9 +63,10 @@ def score_criteria_map(
     summary = {
         "harness": harness,
         "model": model,
+        "surface": surface,
         "tokens": tokens,
         "rounds": rounds,
-        "parity_percent": round(parity, 1),
+        "invariants_percent": round(pct, 1),
         "passed": total_ok,
         "total": total,
         "criteria": {k: bool(criteria[k]) for k in sorted(criteria, key=natural_id_key)},
@@ -121,7 +125,7 @@ def score_junit_report(junit_path: Path, spec_path: Path) -> tuple[dict[str, boo
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Score SpecPack rebuild parity from run-report.json or JUnit XML + spec.md."
+        description="Score SpecPack core invariant satisfaction from run-report.json or JUnit XML + spec.md."
     )
     parser.add_argument(
         "report",
@@ -130,9 +134,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to run-report.json (default when --junit is not set: run-report.json).",
     )
     parser.add_argument("--junit", type=Path, help="Path to JUnit XML test results file.")
-    parser.add_argument("--spec", type=Path, help="Path to pack spec.md defining [X.Y] criteria.")
+    parser.add_argument("--spec", type=Path, help="Path to pack spec.md defining [X.Y] invariants.")
     parser.add_argument("--harness", default="?", help="Rebuilding agent harness name.")
     parser.add_argument("--model", default="?", help="Model identifier used for rebuild.")
+    parser.add_argument("--surface", default="", help="Chosen UI surface / style (e.g. Web UI, macOS menu bar).")
     parser.add_argument("--tokens", default="?", help="Total tokens consumed.")
     parser.add_argument("--rounds", default="?", help="Conversations / rounds used.")
     parser.add_argument("--json-out", type=Path, help="Optional path to write scored run report JSON.")
@@ -155,6 +160,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             criteria,
             harness=args.harness,
             model=args.model,
+            surface=args.surface,
             tokens=args.tokens,
             rounds=args.rounds,
             unverified=unverified,
@@ -171,10 +177,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         if not isinstance(raw_criteria, dict) or not raw_criteria:
             print("no criteria in report")
             return 1
+        surface_val = args.surface or str(report.get("surface", ""))
         summary, rc = score_criteria_map(
             {str(k): bool(v) for k, v in raw_criteria.items()},
             harness=str(report.get("harness", "?")),
             model=str(report.get("model", "?")),
+            surface=surface_val,
             tokens=report.get("tokens", "?"),
             rounds=report.get("rounds", "?"),
         )

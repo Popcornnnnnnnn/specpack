@@ -1,6 +1,7 @@
 name: signal-digest
+format_version: "0.2"
 version: 0.1.0
-description: "Personal daily tech and open-source digest builder (stub)."
+description: "Personal daily tech and open-source digest builder (v0.2 stub)."
 regenerability:
   budget_days: 3
   budget_conversations: 50
