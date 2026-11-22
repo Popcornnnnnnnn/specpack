@@ -49,6 +49,8 @@ Only **`spec.md` (Core Invariants + Non-goals)** is a strict contract:
 
 See [FORMAT.md](FORMAT.md), the [validator](eval/validate.py), the
 [JUnit/JSON scorer](eval/score.py), the
+[clean-room trial scaffolder](eval/prepare_run.py), the
+[side-by-side comparator](eval/compare.py), the
 [pack harvester skill](skills/harvest-specpack/SKILL.md), and the reference packs
 ([Port Tools](examples/port-tools/) and [Signal](examples/signal/)).
 

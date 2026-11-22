@@ -4,9 +4,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
-from eval import _common, score, validate
+from eval import _common, compare, prepare_run, score, validate
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -345,6 +346,116 @@ class TestValidate(unittest.TestCase):
             timeout=30,
         )
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+
+class TestTrialTools(unittest.TestCase):
+    def test_prepare_run_creates_clean_git_trial_and_zip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out_dir = root / "runs" / "codex-run"
+            zip_path = root / "bundles" / "codex-run.zip"
+
+            rc = prepare_run.main([
+                "--pack", str(REPO_ROOT / "examples/port-tools"),
+                "--out", str(out_dir),
+                "--harness", "chatgpt-codex",
+                "--model", "codex",
+                "--taste-mode", "free",
+                "--git-init",
+                "--zip-out", str(zip_path),
+            ])
+            self.assertEqual(rc, 0)
+            self.assertTrue((out_dir / ".git").is_dir())
+            self.assertTrue((out_dir / "pack" / "spec.md").is_file())
+            self.assertTrue((out_dir / "eval" / "score.py").is_file())
+            self.assertTrue((out_dir / "app" / ".gitkeep").is_file())
+            self.assertTrue((out_dir / "deliverables" / ".gitkeep").is_file())
+
+            meta = json.loads((out_dir / "run-meta.json").read_text(encoding="utf-8"))
+            self.assertEqual(meta["pack"], "port-tools")
+            self.assertEqual(meta["harness"], "chatgpt-codex")
+            self.assertEqual(meta["model"], "codex")
+            self.assertEqual(meta["criteria_count"], 12)
+
+            prompt = (out_dir / "HANDOFF_PROMPT.md").read_text(encoding="utf-8")
+            self.assertIn("DO NOT INTERRUPT ME", prompt)
+            self.assertIn("deliverables/run-report.json", prompt)
+            self.assertEqual(list(out_dir.rglob("__pycache__")), [])
+
+            with zipfile.ZipFile(zip_path) as zf:
+                names = zf.namelist()
+                self.assertIn("HANDOFF_PROMPT.md", names)
+                self.assertIn("pack/spec.md", names)
+                self.assertFalse(any(n.startswith(".git/") or "__pycache__" in n for n in names))
+
+    def test_compare_renders_scored_junit_and_pending_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runs_dir = Path(tmp) / "trial-batch"
+            spec_src = REPO_ROOT / "examples/port-tools"
+
+            for slug, harness, model in (
+                ("run-json", "aws-quick", "claude-opus"),
+                ("run-junit", "chatgpt-codex", "codex"),
+                ("run-pending", "command-code", "deepseek"),
+            ):
+                self.assertEqual(
+                    prepare_run.main([
+                        "--pack", str(spec_src),
+                        "--out", str(runs_dir / slug),
+                        "--harness", harness,
+                        "--model", model,
+                    ]),
+                    0,
+                )
+
+            # Run 1: pre-scored JSON report + dummy PNG screenshot
+            r1 = runs_dir / "run-json" / "deliverables"
+            spec_ids, _ = _common.extract_criterion_ids(spec_src / "spec.md")
+            (r1 / "run-report.json").write_text(
+                json.dumps({
+                    "harness": "aws-quick",
+                    "model": "claude-opus",
+                    "surface": "Web Dashboard (Linear)",
+                    "tokens": 120000,
+                    "rounds": 1,
+                    "invariants_percent": 100.0,
+                    "passed": len(spec_ids),
+                    "total": len(spec_ids),
+                    "criteria": {cid: True for cid in spec_ids},
+                    "unverified": [],
+                }),
+                encoding="utf-8",
+            )
+            (r1 / "screen-1.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+            (r1 / "SUMMARY.md").write_text("# Done\nBuilt with Go + HTML.\n", encoding="utf-8")
+
+            # Run 2: JUnit XML only (1 failing criterion) -> compare.py must auto-score
+            r2 = runs_dir / "run-junit" / "deliverables"
+            tcs = []
+            for cid in spec_ids:
+                if cid == "3.2":
+                    tcs.append(f'<testcase name="[{cid}] fail"><failure message="collision"/></testcase>')
+                else:
+                    tcs.append(f'<testcase name="[{cid}] ok"/>')
+            (r2 / "junit.xml").write_text(f"<testsuite>{''.join(tcs)}</testsuite>", encoding="utf-8")
+
+            # Add unrelated directory (should be ignored)
+            (runs_dir / "bundles").mkdir()
+
+            rc = compare.main([str(runs_dir)])
+            self.assertEqual(rc, 0)
+
+            html_text = (runs_dir / "comparison.html").read_text(encoding="utf-8")
+            md_text = (runs_dir / "COMPARISON.md").read_text(encoding="utf-8")
+
+            for slug in ("run-json", "run-junit", "run-pending"):
+                self.assertIn(slug, html_text)
+                self.assertIn(slug, md_text)
+            self.assertNotIn("bundles", md_text)
+            self.assertIn("run-json/deliverables/screen-1.png", html_text)
+            self.assertIn("91.7%", md_text)
+            self.assertIn("FAIL", md_text)
+            self.assertIn("PENDING", md_text)
 
 
 if __name__ == "__main__":
