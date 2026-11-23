@@ -50,11 +50,11 @@ license: MIT
 Entry point for the rebuilding agent.
 - YAML frontmatter `name:` MUST match `pack.yaml` `name:`.
 - Must teach **freedom by default**: obey `spec.md` invariants & non-goals strictly; treat `decisions.md` and `reference/` strictly as advice and inspiration.
-- MUST include a **Personalisation Interview** structured as a lightweight, `/grill-me`-style **Guided Taste Interview** *before writing code*:
-  - Ask **one high-level product/UX question at a time** (surface/form factor, primary mental model, visual vibe & density, personal workflow extras), never a multi-question form dump.
-  - Give 2–4 crisp options per question with one marked `(Recommended)` and honor a `"just use defaults"` fast path at any turn.
-  - **Branch dynamically:** skip follow-up questions rendered irrelevant by earlier answers (for example, skip GUI styling/density when the user picks a TUI or command launcher).
-  - **Keep plumbing out of the interview:** do not ask about sockets, languages, timeouts, schemas, or internal protocols unless the human brings them up — record sensible engineering choices internally.
+- MUST include a **Personalisation Interview** structured as an adaptive, `/grill-me`-style **Guided Taste Interview** *before writing code*:
+  - **Never hardcode a fixed numbered questionnaire** (no rigid `Q1–Q5` script or canned A/B/C/D survey form). Give the agent **open taste dimensions** (a compass of freedom axes) and let it run a natural conversation tailored to the user's answers.
+  - Ask **one short high-level product/UX question at a time**, adapt each next question based on what the human actually answered, and stop early once the product shape is clear (`3–5` turns typical).
+  - Give concrete directions or trade-offs with one `(Recommended)` choice per turn, and honor `"just use defaults"` at any moment.
+  - **Keep plumbing out of the interview:** do not ask about sockets, languages, timeouts, schemas, or internal protocols unless the human brings them up — make clean engineering choices internally.
 
 ### `reference/` (replaces `golden/` from v0.1)
 Screenshots, GIFs, or sample exports of **one creator's version**, labeled as inspiration/moodboard rather than a target to replicate. Never fail a rebuild because it chose a different layout or aesthetic.

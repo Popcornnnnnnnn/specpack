@@ -326,6 +326,9 @@ class TestValidate(unittest.TestCase):
     def test_port_tools_pack_validates_strict_and_harness_runs(self) -> None:
         pack = REPO_ROOT / "examples/port-tools"
         self.assertEqual(validate.main([str(pack), "--strict"]), 0)
+        skill_text = (pack / "SKILL.md").read_text(encoding="utf-8")
+        self.assertNotIn("Question 1", skill_text)
+        self.assertIn("open taste dimensions", skill_text.lower())
 
         spec_ids, duplicates = _common.extract_criterion_ids(pack / "spec.md")
         self.assertEqual(duplicates, [])
@@ -409,8 +412,10 @@ class TestTrialTools(unittest.TestCase):
 
             prompt = (out_dir / "HANDOFF_PROMPT.md").read_text(encoding="utf-8")
             self.assertIn("Guided Taste Interview", prompt)
+            self.assertIn("open taste dimensions", prompt)
             self.assertIn("DO NOT skip the interview", prompt)
             self.assertNotIn("Skip the interactive pause", prompt)
+            self.assertNotIn("Q1–Q5", prompt)
             self.assertTrue(zip_path.is_file())
 
     def test_compare_renders_scored_junit_and_pending_runs(self) -> None:

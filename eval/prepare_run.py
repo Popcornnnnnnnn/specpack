@@ -53,7 +53,7 @@ def _copy_filtered_tree(src: Path, dst: Path) -> None:
 def _render_operating_mode(taste_mode: str) -> str:
     if taste_mode == "interactive":
         return """## Operating Mode — Interview First, Then Build End-to-End
-- **Phase 1 — Guided Taste Interview:** Start by running the lightweight `/grill-me`-style **Guided Taste Interview** in `pack/SKILL.md` **one high-level product/UX question at a time** (2–4 concise choices with `(Recommended)`, dynamic branching, `"just use defaults"` fast path always honored, zero low-level plumbing questions). Record the human's final answers in `deliverables/TASTE.md`.
+- **Phase 1 — Guided Taste Interview:** Start by exploring the open taste dimensions in `pack/SKILL.md` with the user using an adaptive `/grill-me`-style conversation (**one short high-level product/UX question at a time**, adapting follow-ups naturally to earlier replies, offering concise choices with a `(Recommended)` option, honoring `"just use defaults"`, stopping early once clear, and zero low-level plumbing questions). Record the chosen taste profile in `deliverables/TASTE.md`.
 - **Phase 2 — Autonomous Build & Verify:** Once the interview finishes (or the human delegates defaults), proceed autonomously end-to-end without pausing for confirmations until `app/`, `contract_harness.py`, `eval/score.py`, real UI screenshots, and `deliverables/SUMMARY.md` are complete.
 - **CLEAN-ROOM BOUNDARY:** Work strictly inside this trial directory (`pack/`, `eval/`, `app/`, `deliverables/`). Never read parent or sibling directories on disk.
 - If anything in the pack is ambiguous, make a well-reasoned choice, document it in `deliverables/PACK_GAPS.md`, and keep moving.
@@ -67,28 +67,28 @@ def _render_operating_mode(taste_mode: str) -> str:
 
 def _render_taste_section(taste_mode: str) -> str:
     if taste_mode == "interactive":
-        return """- **DO NOT skip the interview.** Before designing or writing code, ask the user the Guided Taste Interview questions from `pack/SKILL.md` one at a time.
-- Wait for the user's answer after each question (or adopt all remaining `(Recommended)` defaults immediately if they say `"just use defaults"`).
-- Write the chosen Q1–Q5 profile into `deliverables/TASTE.md`, then immediately execute Phase 2 end-to-end."""
+        return """- **DO NOT skip the interview.** Before designing or writing code, explore the open taste dimensions in `pack/SKILL.md` adaptively with the user — one question at a time (never recite a rigid fixed script).
+- Wait for the user's answer after each question (or adopt sensible `(Recommended)` defaults immediately if they say `"just use defaults"`), and stop once the product shape is clear.
+- Write the chosen taste profile into `deliverables/TASTE.md`, then immediately execute Phase 2 end-to-end."""
 
     if taste_mode == "web-dashboard":
         return """- Skip the interactive pause in `pack/SKILL.md` and follow this fixed Taste Profile:
-  - **Q1 Surface & form factor:** Local Web Dashboard (works cleanly on this OS)
-  - **Q2 Mental model:** Project-first (Recommended)
-  - **Q3 Visual vibe & density:** Crisp Linear minimal (Recommended)
-  - **Q4 `{alias}.localhost` URL style:** Zero-setup `http://{alias}.localhost:{port}` (Recommended)
-  - **Q5 Extras:** Keep it clean and focused (Recommended)
+  - **Surface & form factor:** Local Web Dashboard (works cleanly on this OS)
+  - **Mental model:** Project-first (Recommended)
+  - **Visual vibe & density:** Crisp Linear minimal (Recommended)
+  - **Local URL style:** Zero-setup `http://{alias}.localhost:{port}` (Recommended)
+  - **Extras:** Keep it clean and focused (Recommended)
 - Save a concise copy of these choices in `deliverables/TASTE.md`."""
 
     if taste_mode == "defaults":
-        return """- Skip the interactive pause in `pack/SKILL.md` and adopt the `(Recommended)` defaults in `pack/SKILL.md`.
-- If running on Linux or a headless sandbox without macOS desktop GUI support, use **Local Web Dashboard** as your Q1 fallback surface so everything builds, runs live, and can be screenshot-verified.
+        return """- Skip the interactive pause in `pack/SKILL.md` and adopt the `(Recommended)` defaults across the open taste dimensions in `pack/SKILL.md`.
+- If running on Linux or a headless sandbox without macOS desktop GUI support, use **Local Web Dashboard** as your fallback surface so everything builds, runs live, and can be screenshot-verified.
 - Record the applied defaults in `deliverables/TASTE.md`."""
 
-    return """- Skip the interactive pause in `pack/SKILL.md` and choose your own taste profile for Q1–Q5:
+    return """- Skip the interactive pause in `pack/SKILL.md` and choose your own taste profile across the open taste dimensions in `pack/SKILL.md`:
   - Pick the **best runnable surface** that compiles, runs live, passes `pack/tests/contract_harness.py`, and captures real screenshots on this OS (for Linux sandboxes, choose **Local Web Dashboard** or **Terminal TUI**; on macOS you may pick **Menu Bar App**, **Local Web Dashboard**, or **Terminal TUI**).
-  - Pick your own **mental model** (Project-first, Attention-first, or Search-first), **visual vibe**, and **workflow extras** matching `pack/SKILL.md`.
-- Record all Q1–Q5 choices and brief taste reasoning in `deliverables/TASTE.md`."""
+  - Pick your own **mental model** (Project-first, Attention-first, or Search-first), **interaction/visual feel**, and **workflow extras** matching `pack/SKILL.md`.
+- Record your choices and brief taste reasoning in `deliverables/TASTE.md`."""
 
 
 def _render_handoff_prompt(
