@@ -50,7 +50,27 @@ def _copy_filtered_tree(src: Path, dst: Path) -> None:
     shutil.copytree(src, dst, ignore=ignore, dirs_exist_ok=True)
 
 
+def _render_operating_mode(taste_mode: str) -> str:
+    if taste_mode == "interactive":
+        return """## Operating Mode — Interview First, Then Build End-to-End
+- **Phase 1 — Guided Taste Interview:** Start by running the lightweight `/grill-me`-style **Guided Taste Interview** in `pack/SKILL.md` **one high-level product/UX question at a time** (2–4 concise choices with `(Recommended)`, dynamic branching, `"just use defaults"` fast path always honored, zero low-level plumbing questions). Record the human's final answers in `deliverables/TASTE.md`.
+- **Phase 2 — Autonomous Build & Verify:** Once the interview finishes (or the human delegates defaults), proceed autonomously end-to-end without pausing for confirmations until `app/`, `contract_harness.py`, `eval/score.py`, real UI screenshots, and `deliverables/SUMMARY.md` are complete.
+- **CLEAN-ROOM BOUNDARY:** Work strictly inside this trial directory (`pack/`, `eval/`, `app/`, `deliverables/`). Never read parent or sibling directories on disk.
+- If anything in the pack is ambiguous, make a well-reasoned choice, document it in `deliverables/PACK_GAPS.md`, and keep moving.
+- **Sandbox fallback:** If your execution environment blocks live local sockets or process inspection, complete all application code, unit tests, and read-only verification honestly (do not fabricate passing scores), and provide a one-command `app/scripts/verify.sh` for host verification."""
+
+    return """## Operating Mode — DO NOT INTERRUPT ME
+- Work autonomously end-to-end without pausing for clarification or confirmation.
+- **CLEAN-ROOM BOUNDARY:** Work strictly inside this trial directory (`pack/`, `eval/`, `app/`, `deliverables/`). Never read parent or sibling directories on disk.
+- If anything in the pack is ambiguous, make a well-reasoned choice, document it in `deliverables/PACK_GAPS.md`, and keep moving."""
+
+
 def _render_taste_section(taste_mode: str) -> str:
+    if taste_mode == "interactive":
+        return """- **DO NOT skip the interview.** Before designing or writing code, ask the user the Guided Taste Interview questions from `pack/SKILL.md` one at a time.
+- Wait for the user's answer after each question (or adopt all remaining `(Recommended)` defaults immediately if they say `"just use defaults"`).
+- Write the chosen Q1–Q5 profile into `deliverables/TASTE.md`, then immediately execute Phase 2 end-to-end."""
+
     if taste_mode == "web-dashboard":
         return """- Skip the interactive pause in `pack/SKILL.md` and follow this fixed Taste Profile:
   - **Q1 Surface & form factor:** Local Web Dashboard (works cleanly on this OS)
@@ -79,15 +99,13 @@ def _render_handoff_prompt(
     taste_mode: str,
     criteria_count: int,
 ) -> str:
+    operating_block = _render_operating_mode(taste_mode)
     taste_block = _render_taste_section(taste_mode)
     return f"""# SpecPack Clean-Room Rebuild Handoff — `{pack_name}`
 
 You are rebuilding **`{pack_name}`** strictly from the self-contained SpecPack in `pack/` (`{criteria_count}` Core Invariants).
 
-## Operating Mode — DO NOT INTERRUPT ME
-- Work autonomously end-to-end without pausing for clarification or confirmation.
-- **CLEAN-ROOM BOUNDARY:** Work strictly inside this trial directory (`pack/`, `eval/`, `app/`, `deliverables/`). Never read parent or sibling directories on disk.
-- If anything in the pack is ambiguous, make a well-reasoned choice, document it in `deliverables/PACK_GAPS.md`, and keep moving.
+{operating_block}
 
 ## Personalisation Brief (`taste_mode: {taste_mode}`)
 {taste_block}
@@ -166,7 +184,7 @@ def prepare_trial(
     out_dir: Path,
     harness: str,
     model: str,
-    taste_mode: str = "free",
+    taste_mode: str = "interactive",
     git_init: bool = False,
     zip_out: Optional[Path] = None,
 ) -> dict[str, object]:
@@ -241,9 +259,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", required=True, help="Target model identifier.")
     parser.add_argument(
         "--taste-mode",
-        choices=("free", "web-dashboard", "defaults"),
-        default="free",
-        help="Personalisation prompt mode written to HANDOFF_PROMPT.md (default: free).",
+        choices=("interactive", "free", "web-dashboard", "defaults"),
+        default="interactive",
+        help="Personalisation prompt mode written to HANDOFF_PROMPT.md (default: interactive).",
     )
     parser.add_argument(
         "--git-init",

@@ -20,7 +20,7 @@ Spins up disposable local IPv4/IPv6 HTTP, Swagger/DevTools, raw TCP, WebSocket u
 
 ## 3. Run the contract suite against a rebuilt implementation
 
-A rebuilding agent wires any language/UI implementation via a small CLI adapter (`--adapter`) implementing four subcommands over temporary isolated state:
+A rebuilding agent wires any language/UI implementation via a small CLI adapter (`--adapter`) implementing the subcommands over temporary isolated state (`python3 tests/contract_harness.py --show-contract`):
 
 ```text
 <adapter> scan --state-dir <dir>
@@ -28,7 +28,10 @@ A rebuilding agent wires any language/UI implementation via a small CLI adapter 
 <adapter> stop-plan --pid <pid> --state-dir <dir>
 <adapter> stop --plan-token <token> [--force] --state-dir <dir>
 <adapter> init-routes --state-dir <dir>   # used for corrupt route recovery test [3.3]
+<adapter> shutdown --state-dir <dir>      # optional cleanup called after suite ends
 ```
+
+Notice `scan` and `alias set` must ensure the `--state-dir`-scoped loopback reverse proxy is listening and return its live `proxy_port` (so HTTP, WebSocket, SSE `/events`, restart rebinding, and `502` offline checks run immediately without an external daemon launch), and detached daemons should exit cleanly on `shutdown` or state-dir removal.
 
 Run the contract harness to produce JUnit XML and score directly against `spec.md`:
 

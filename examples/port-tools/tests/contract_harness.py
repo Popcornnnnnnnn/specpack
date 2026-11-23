@@ -35,6 +35,7 @@ ADAPTER_CONTRACT = """Port Tools Contract Harness — Minimal CLI Adapter Contra
 Pass --adapter "<cmd>" where <cmd> accepts these subcommands with --state-dir <dir>:
 
 1. <cmd> scan --state-dir <dir>
+   Must ensure a --state-dir-scoped loopback reverse proxy is listening and return:
    stdout JSON:
    {
      "proxy_port": 17890,
@@ -62,11 +63,13 @@ Pass --adapter "<cmd>" where <cmd> accepts these subcommands with --state-dir <d
    }
 
 2. <cmd> alias set --alias <name> --pid <pid> --port <port> --state-dir <dir>
+   Ensures the proxy is active and registers/persists the logical route.
    stdout JSON: {"alias": "<name>", "url": "http://<name>.localhost:<proxy_port>"}
    Must exit non-zero on collision with a different app/worktree.
 
 3. <cmd> stop-plan --pid <pid> --state-dir <dir>
    stdout JSON: {"eligible": true, "refusal_reason": "", "plan_token": "<tok>", "ports": [41937]}
+   Exits 0 even when eligible is false (with non-empty refusal_reason).
 
 4. <cmd> stop --plan-token <tok> [--force] --state-dir <dir>
    Exits 0 cleanly on verified port release; exits non-zero when token is stale/mismatched
@@ -75,6 +78,10 @@ Pass --adapter "<cmd>" where <cmd> accepts these subcommands with --state-dir <d
 5. <cmd> init-routes --state-dir <dir>
    Initializes or loads persisted routes; must back up corrupt routes JSON to *.corrupt-*
    before reinitializing.
+
+6. <cmd> shutdown --state-dir <dir>   (optional cleanup hook)
+   Cleanly stops any background proxy daemon started for <dir> (detached daemons should
+   also auto-exit promptly once <dir> is removed).
 """
 
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -344,6 +351,23 @@ def create_dual_worktree_git_fixture(root: Path) -> tuple[Path, Path, Path]:
     return main_dir, wt_dir, nm_pkg
 
 
+def create_rebind_git_fixture(root: Path) -> Path:
+    """Create a standalone single-checkout Git repo for alias restart rebinding tests."""
+    rebind_dir = root / "rebind-app"
+    rebind_dir.mkdir(parents=True, exist_ok=True)
+    for args in (
+        ("init", "-b", "main"),
+        ("config", "user.name", "SpecPack Test"),
+        ("config", "user.email", "test@example.invalid"),
+        ("remote", "add", "origin", "https://github.com/acme/rebind-app.git"),
+    ):
+        subprocess.run(["git", *args], cwd=rebind_dir, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    (rebind_dir / "package.json").write_text('{"name": "rebind-app", "version": "1.0.0"}\n', encoding="utf-8")
+    subprocess.run(["git", "add", "package.json"], cwd=rebind_dir, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    subprocess.run(["git", "commit", "-m", "init rebind"], cwd=rebind_dir, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    return rebind_dir
+
+
 def websocket_roundtrip(host: str, port: int, host_header: str, message: str = "ping") -> str:
     """Perform a minimal RFC 6455 HTTP upgrade and text echo over a TCP socket."""
     family = socket.AF_INET6 if ":" in host else socket.AF_INET
@@ -450,6 +474,8 @@ def run_self_test() -> int:
     with tempfile.TemporaryDirectory(prefix="port-tools-selftest-") as tmp:
         root = Path(tmp)
         main_dir, wt_dir, nm_pkg = create_dual_worktree_git_fixture(root)
+        rebind_dir = create_rebind_git_fixture(root)
+        assert (rebind_dir / "package.json").is_file()
         main_html = FixtureProcess("html", "127.0.0.1", main_dir)
         wt_swagger = FixtureProcess("swagger", "127.0.0.1", wt_dir)
         nm_api = FixtureProcess("json", "127.0.0.1", nm_pkg)
@@ -511,23 +537,28 @@ def run_adapter_suite(adapter_cmd: str, junit_out: Optional[Path]) -> int:
         state_dir.mkdir(parents=True, exist_ok=True)
 
         main_dir, wt_dir, nm_pkg = create_dual_worktree_git_fixture(root)
+        rebind_dir = create_rebind_git_fixture(root)
         p_main = FixtureProcess("html", "127.0.0.1", main_dir)
         p_wt = FixtureProcess("html", "127.0.0.1", wt_dir)
         p_swg = FixtureProcess("swagger", "127.0.0.1", main_dir)
         p_dt = FixtureProcess("devtools", "127.0.0.1", root)
         p_tcp = FixtureProcess("raw_tcp", "127.0.0.1", root)
         p_trap = FixtureProcess("json", "127.0.0.1", nm_pkg)
+        p_rebind_1 = FixtureProcess("html", "127.0.0.1", rebind_dir)
+        p_graceful = FixtureProcess("html", "127.0.0.1", main_dir)
         p_stubborn = FixtureProcess("html", "127.0.0.1", wt_dir, ignore_sigterm=True)
         ipv6_ok = ipv6_loopback_available()
         p_v6 = FixtureProcess("html", "::1", main_dir) if ipv6_ok else None
 
-        procs = [p_main, p_wt, p_swg, p_dt, p_tcp, p_trap, p_stubborn]
+        procs = [p_main, p_wt, p_swg, p_dt, p_tcp, p_trap, p_rebind_1, p_graceful, p_stubborn]
         if p_v6:
             procs.append(p_v6)
 
+        t_rebind_started = 0.0
         try:
             for p in procs:
                 p.start()
+            t_rebind_started = time.monotonic()
 
             def record(cid: str, name: str, fn: Callable[[], None]) -> None:
                 t0 = time.monotonic()
@@ -570,19 +601,36 @@ def run_adapter_suite(adapter_cmd: str, junit_out: Optional[Path]) -> int:
 
             def check_2_1() -> None:
                 m = by_port[p_main.port]
-                assert "s3cr3t" not in json.dumps(m), "Git credential leaked into scan output"
+                assert m.get("project_root"), "Missing project_root for Git repo listener"
+                assert m.get("branch") == "main", f"Expected branch 'main', got {m.get('branch')!r}"
+                assert "github.com/acme/demo-web" in str(m.get("remote") or ""), f"Missing normalized remote: {m.get('remote')!r}"
+                serialized_m = json.dumps(m)
+                assert "s3cr3t" not in serialized_m and "devuser" not in serialized_m, "Git credential leaked into scan output"
                 trap_root = str(by_port[p_trap.port].get("project_root") or "")
                 assert "node_modules" not in trap_root, "False root attributed inside node_modules"
 
             def check_2_2() -> None:
                 a = by_port[p_main.port]
                 b = by_port[p_wt.port]
-                assert a.get("branch") != b.get("branch"), "Worktree branches collapsed"
-                assert a.get("worktree") != b.get("worktree"), "Distinct worktree paths collapsed"
+                assert a.get("branch") == "main", f"Main worktree branch mismatch: {a.get('branch')!r}"
+                assert b.get("branch") == "feat/proxy", f"Linked worktree branch mismatch: {b.get('branch')!r}"
+                assert a.get("worktree") and b.get("worktree"), "Missing worktree path"
+                assert Path(str(a["worktree"])).resolve() != Path(str(b["worktree"])).resolve(), "Distinct worktree paths collapsed"
 
             def check_2_3() -> None:
-                # Verify container field schema if a container port exists on host, else confirm schema support
                 assert "container" in by_port[p_main.port], "Listener payload missing container field"
+                assert by_port[p_main.port]["container"] is None, "Local Python fixture mislabeled as container"
+                for item in listeners:
+                    cmd_str = json.dumps(item).lower()
+                    is_container = item.get("container") is not None or any(
+                        tok in cmd_str for tok in ("docker-proxy", "com.docker.backend", "dockerd")
+                    )
+                    if is_container:
+                        _, c_plan_out, _ = run_adapter(adapter_argv, ["stop-plan", "--pid", str(item["pid"])], state_dir)
+                        c_plan = json.loads(c_plan_out)
+                        assert c_plan.get("eligible") is False, f"Container/runtime listener PID {item['pid']} allowed stop"
+                        assert c_plan.get("refusal_reason"), "Container refusal missing explanation"
+                        break
 
             def check_3_1() -> None:
                 assert proxy_port > 0, "proxy_port missing in scan output"
@@ -591,6 +639,8 @@ def run_adapter_suite(adapter_cmd: str, junit_out: Optional[Path]) -> int:
                 assert status == 200 and b"Hello Port Tools" in body
                 echo = websocket_roundtrip("127.0.0.1", proxy_port, f"demo-main.localhost:{proxy_port}", "hmr")
                 assert echo == "echo:hmr"
+                sse_status, sse_body = http_get("127.0.0.1", proxy_port, f"demo-main.localhost:{proxy_port}", "/events")
+                assert sse_status == 200 and b"data: hello" in sse_body, f"SSE proxy failed: {sse_status}"
                 if p_v6:
                     run_adapter(adapter_argv, ["alias", "set", "--alias", "demo-v6", "--pid", str(p_v6.pid), "--port", str(p_v6.port)], state_dir)
                     st6, _ = http_get("127.0.0.1", proxy_port, f"demo-v6.localhost:{proxy_port}")
@@ -604,6 +654,27 @@ def run_adapter_suite(adapter_cmd: str, junit_out: Optional[Path]) -> int:
                     expect_ok=False,
                 )
                 assert rc != 0, "Silent alias collision across worktrees was accepted"
+
+                run_adapter(
+                    adapter_argv,
+                    ["alias", "set", "--alias", "demo-rebind", "--pid", str(p_rebind_1.pid), "--port", str(p_rebind_1.port)],
+                    state_dir,
+                )
+                st1, _ = http_get("127.0.0.1", proxy_port, f"demo-rebind.localhost:{proxy_port}")
+                assert st1 == 200, f"Initial rebind alias failed with {st1}"
+
+                p_rebind_1.close()
+                # Advance past 1-second ps lstart granularity cleanly before spawning replacement.
+                wait_left = 1.15 - (time.monotonic() - t_rebind_started)
+                if wait_left > 0:
+                    time.sleep(wait_left)
+
+                p_rebind_2 = FixtureProcess("html", "127.0.0.1", rebind_dir)
+                procs.append(p_rebind_2)
+                p_rebind_2.start()
+                run_adapter(adapter_argv, ["scan"], state_dir)
+                st2, body2 = http_get("127.0.0.1", proxy_port, f"demo-rebind.localhost:{proxy_port}")
+                assert st2 == 200 and b"Hello Port Tools" in body2, f"Alias did not rebind across restart (HTTP {st2})"
 
             def check_3_3() -> None:
                 p_wt_alias = "demo-offline"
@@ -622,18 +693,38 @@ def run_adapter_suite(adapter_cmd: str, junit_out: Optional[Path]) -> int:
             def check_4_1() -> None:
                 st = by_port[p_main.port].get("stale", {})
                 assert isinstance(st, dict)
-                assert "unused" not in json.dumps(st).lower(), "Forbidden 'unused' staleness label"
+                assert st.get("flagged") is False, "Fresh active listener falsely marked stale"
+                assert "unused" not in json.dumps(listeners).lower(), "Forbidden 'unused' staleness label"
+                for item in listeners:
+                    item_stale = item.get("stale") or {}
+                    if item_stale.get("flagged"):
+                        assert item_stale.get("label") == "possibly forgotten"
+                        assert item_stale.get("reasons"), "Flagged stale listener missing evidence reasons"
 
             def check_4_2() -> None:
+                _, sys_out, _ = run_adapter(adapter_argv, ["stop-plan", "--pid", "1"], state_dir)
+                sys_plan = json.loads(sys_out)
+                assert sys_plan.get("eligible") is False and sys_plan.get("refusal_reason"), "PID 1 system runtime not refused"
+
+                if proxy_port in by_port:
+                    _, self_out, _ = run_adapter(adapter_argv, ["stop-plan", "--pid", str(by_port[proxy_port]["pid"])], state_dir)
+                    self_plan = json.loads(self_out)
+                    assert self_plan.get("eligible") is False, "Self proxy process allowed stop"
+
                 _, plan_out, _ = run_adapter(adapter_argv, ["stop-plan", "--pid", str(p_main.pid)], state_dir)
                 plan = json.loads(plan_out)
                 assert plan.get("eligible") is True and plan.get("plan_token")
-                # Kill and test stale/mismatched token reuse rejection on another PID
                 p_main.close()
                 rc, _, _ = run_adapter(adapter_argv, ["stop", "--plan-token", str(plan["plan_token"])], state_dir, expect_ok=False)
                 assert rc != 0, "Stop proceeded even though target process already vanished/changed"
 
             def check_4_3() -> None:
+                _, g_plan_out, _ = run_adapter(adapter_argv, ["stop-plan", "--pid", str(p_graceful.pid)], state_dir)
+                g_plan = json.loads(g_plan_out)
+                assert g_plan.get("eligible") is True and g_plan.get("plan_token")
+                run_adapter(adapter_argv, ["stop", "--plan-token", str(g_plan["plan_token"])], state_dir)
+                assert not port_is_listening("127.0.0.1", p_graceful.port), "Graceful stop returned success while port still listening"
+
                 _, plan_out, _ = run_adapter(adapter_argv, ["stop-plan", "--pid", str(p_stubborn.pid)], state_dir)
                 plan = json.loads(plan_out)
                 rc, _, _ = run_adapter(adapter_argv, ["stop", "--plan-token", str(plan["plan_token"])], state_dir, expect_ok=False)
@@ -649,17 +740,19 @@ def run_adapter_suite(adapter_cmd: str, junit_out: Optional[Path]) -> int:
                 ("1.3", "Conservative primary promotion separates secondary endpoints", check_1_3),
                 ("2.1", "Git attribution strips secrets and ignores toolchain caches", check_2_1),
                 ("2.2", "Distinct Git worktree identity kept separate", check_2_2),
-                ("2.3", "Container-published listener awareness schema", check_2_3),
-                ("3.1", "Locked loopback *.localhost reverse proxy HTTP/WS/IPv6", check_3_1),
-                ("3.2", "Alias collision across distinct worktrees refused", check_3_2),
+                ("2.3", "Container-published listener awareness and stop refusal", check_2_3),
+                ("3.1", "Locked loopback *.localhost reverse proxy HTTP/WS/SSE/IPv6", check_3_1),
+                ("3.2", "Alias collision refusal and restart rebinding", check_3_2),
                 ("3.3", "Offline upstream diagnostic and corrupt state backup", check_3_3),
                 ("4.1", "Conservative staleness metadata avoids unused wording", check_4_1),
-                ("4.2", "Stop plan token rejects missing/mismatched PID identity", check_4_2),
-                ("4.3", "Post-stop port verification and explicit --force escalation", check_4_3),
+                ("4.2", "Stop plan refuses PID 1/self and rejects vanished/mismatched PID identity", check_4_2),
+                ("4.3", "Graceful port release verification and explicit --force escalation", check_4_3),
             ]
             for cid, name, fn in checks:
                 record(cid, name, fn)
         finally:
+            with contextlib.suppress(Exception):
+                run_adapter(adapter_argv, ["shutdown"], state_dir, expect_ok=False)
             for p in procs:
                 p.close()
 

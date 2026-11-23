@@ -388,6 +388,31 @@ class TestTrialTools(unittest.TestCase):
                 self.assertIn("pack/spec.md", names)
                 self.assertFalse(any(n.startswith(".git/") or "__pycache__" in n for n in names))
 
+    def test_prepare_run_defaults_to_interactive_interview(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out_dir = root / "runs" / "interactive-run"
+            zip_path = root / "bundles" / "interactive-run.zip"
+
+            rc = prepare_run.main([
+                "--pack", str(REPO_ROOT / "examples/port-tools"),
+                "--out", str(out_dir),
+                "--harness", "aws-quick",
+                "--model", "claude-opus",
+                "--git-init",
+                "--zip-out", str(zip_path),
+            ])
+            self.assertEqual(rc, 0)
+            self.assertTrue((out_dir / ".git").is_dir())
+            meta = json.loads((out_dir / "run-meta.json").read_text(encoding="utf-8"))
+            self.assertEqual(meta["taste_mode"], "interactive")
+
+            prompt = (out_dir / "HANDOFF_PROMPT.md").read_text(encoding="utf-8")
+            self.assertIn("Guided Taste Interview", prompt)
+            self.assertIn("DO NOT skip the interview", prompt)
+            self.assertNotIn("Skip the interactive pause", prompt)
+            self.assertTrue(zip_path.is_file())
+
     def test_compare_renders_scored_junit_and_pending_runs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runs_dir = Path(tmp) / "trial-batch"
