@@ -1,5 +1,7 @@
 # SpecPack — Rebuildable Personal Software, Not Clones
 
+**English** · [简体中文](README.zh-CN.md)
+
 > Open-source the **recipe & invariants**, so each person gets *their* meal.
 
 AI agents can build almost any small piece of software. The result is a flood
