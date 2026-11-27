@@ -59,6 +59,7 @@ def criterion_match_pattern(cid: str) -> re.Pattern[str]:
     """Compile boundary-safe regex matching '[1.1]', '1.1', or '1_1' in test identifiers."""
     esc_dot = re.escape(cid)
     esc_under = re.escape(cid.replace(".", "_"))
-    pre = r"(?<![0-9])(?<![0-9]\.)(?<![0-9]_)"
+    # Keep HTTP version strings from counting as evidence for a criterion.
+    pre = r"(?<![0-9])(?<![0-9]\.)(?<![0-9]_)(?<!(?i:http)[/_])"
     post = r"(?![0-9])(?!\.[0-9])(?!_[0-9])"
     return re.compile(rf"(?:\[{esc_dot}\]|{pre}(?:{esc_dot}|{esc_under}){post})")

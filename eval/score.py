@@ -17,6 +17,28 @@ except ImportError:
     from _common import criterion_match_pattern, extract_criterion_ids, natural_id_key
 
 
+def _validate_criteria(criteria: dict[str, bool]) -> None:
+    for cid, ok in criteria.items():
+        if not isinstance(ok, bool):
+            raise ValueError(f"criterion {cid} must have a boolean result")
+
+
+def read_run_report(path: Path) -> tuple[dict[str, object], dict[str, bool], list[str]]:
+    """Read the criterion results and provenance from a JSON report."""
+    report = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(report, dict) or not isinstance(report.get("criteria"), dict):
+        raise ValueError("run report must contain a criteria object")
+    _validate_criteria(report["criteria"])
+
+    unverified = report.get("unverified")
+    if unverified is None:
+        unverified = []
+    if not isinstance(unverified, list) or any(not isinstance(cid, str) for cid in unverified):
+        raise ValueError("run report unverified must be a list of criterion IDs or null")
+
+    return report, report["criteria"], unverified
+
+
 def score_criteria_map(
     criteria: dict[str, bool],
     *,
@@ -30,6 +52,10 @@ def score_criteria_map(
 ) -> tuple[dict[str, object], int]:
     """Compute per-area and total invariant satisfaction and print a formatted summary."""
     stream = out_stream or sys.stdout
+    _validate_criteria(criteria)
+
+    unverified = sorted(set(unverified or []), key=natural_id_key)
+    criteria = {**criteria, **dict.fromkeys(unverified, False)}
     if not criteria:
         print("no criteria to score", file=stream)
         return {}, 1
@@ -38,7 +64,7 @@ def score_criteria_map(
     for cid, ok in criteria.items():
         area = str(cid).split(".")[0]
         areas[area][1] += 1
-        areas[area][0] += int(bool(ok))
+        areas[area][0] += int(ok)
 
     total_ok = sum(v[0] for v in areas.values())
     total = sum(v[1] for v in areas.values())
@@ -57,8 +83,7 @@ def score_criteria_map(
     if failed:
         print("Failed criteria:", ", ".join(failed), file=stream)
     if unverified:
-        sorted_unverified = sorted(unverified, key=natural_id_key)
-        print("Unverified criteria (no executed test):", ", ".join(sorted_unverified), file=stream)
+        print("Unverified criteria (no executed test):", ", ".join(unverified), file=stream)
 
     summary = {
         "harness": harness,
@@ -69,23 +94,34 @@ def score_criteria_map(
         "invariants_percent": round(pct, 1),
         "passed": total_ok,
         "total": total,
-        "criteria": {k: bool(criteria[k]) for k in sorted(criteria, key=natural_id_key)},
+        "criteria": {k: criteria[k] for k in sorted(criteria, key=natural_id_key)},
         "failed": failed,
-        "unverified": sorted(unverified or [], key=natural_id_key),
+        "unverified": unverified,
     }
     return summary, 0
 
 
-def score_junit_report(junit_path: Path, spec_path: Path) -> tuple[dict[str, bool], list[str]]:
-    """Map executed JUnit XML <testcase> results onto spec.md criterion IDs."""
+def read_scoring_spec(spec_path: Path) -> list[str]:
+    """Read a nonempty, unambiguous set of criterion IDs for scoring."""
     spec_ids, duplicates = extract_criterion_ids(spec_path)
     if duplicates:
         raise ValueError(f"Duplicate criterion IDs in {spec_path}: {', '.join(duplicates)}")
     if not spec_ids:
         raise ValueError(f"No bracketed criterion IDs (e.g. [1.1]) found in {spec_path}")
+    return spec_ids
 
+
+def score_junit_report(junit_path: Path, spec_path: Path) -> tuple[dict[str, bool], list[str]]:
+    """Map executed JUnit XML <testcase> results onto spec.md criterion IDs."""
+    return score_junit_criteria(junit_path, read_scoring_spec(spec_path))
+
+
+def score_junit_criteria(junit_path: Path, spec_ids: list[str]) -> tuple[dict[str, bool], list[str]]:
+    """Score JUnit evidence against previously resolved criterion IDs."""
     tree = ET.parse(junit_path)
     root = tree.getroot()
+    if root.tag not in {"testsuite", "testsuites"}:
+        raise ValueError(f"Expected a JUnit testsuite or testsuites root in {junit_path}")
 
     patterns = {cid: criterion_match_pattern(cid) for cid in spec_ids}
     counts: dict[str, dict[str, int]] = {
@@ -135,11 +171,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--junit", type=Path, help="Path to JUnit XML test results file.")
     parser.add_argument("--spec", type=Path, help="Path to pack spec.md defining [X.Y] invariants.")
-    parser.add_argument("--harness", default="?", help="Rebuilding agent harness name.")
-    parser.add_argument("--model", default="?", help="Model identifier used for rebuild.")
-    parser.add_argument("--surface", default="", help="Chosen UI surface / style (e.g. Web UI, macOS menu bar).")
-    parser.add_argument("--tokens", default="?", help="Total tokens consumed.")
-    parser.add_argument("--rounds", default="?", help="Conversations / rounds used.")
+    parser.add_argument("--harness", help="Rebuilding agent harness name.")
+    parser.add_argument("--model", help="Model identifier used for rebuild.")
+    parser.add_argument("--surface", help="Chosen UI surface / style (e.g. Web UI, macOS menu bar).")
+    parser.add_argument("--tokens", help="Total tokens consumed.")
+    parser.add_argument("--rounds", help="Conversations / rounds used.")
     parser.add_argument("--json-out", type=Path, help="Optional path to write scored run report JSON.")
     return parser
 
@@ -148,44 +184,33 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if args.junit is not None or args.spec is not None:
-        if args.junit is None or args.spec is None:
-            parser.error("--junit and --spec must be provided together.")
-        try:
+    if (args.junit is None) != (args.spec is None):
+        parser.error("--junit and --spec must be provided together.")
+    if args.junit is not None and args.report is not None:
+        parser.error("a JSON report path cannot be used with --junit.")
+
+    source = args.junit or Path(args.report or "run-report.json")
+    report: dict[str, object] = {}
+    try:
+        if args.junit is not None:
             criteria, unverified = score_junit_report(args.junit, args.spec)
-        except (OSError, ET.ParseError, ValueError) as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 1
+        else:
+            report, criteria, unverified = read_run_report(source)
+
+        metadata = {}
+        for key, default in (("harness", "?"), ("model", "?"), ("surface", ""), ("tokens", "?"), ("rounds", "?")):
+            override = getattr(args, key)
+            metadata[key] = override if override is not None else report.get(key, default)
+        for key in ("harness", "model", "surface"):
+            metadata[key] = str(metadata[key])
         summary, rc = score_criteria_map(
             criteria,
-            harness=args.harness,
-            model=args.model,
-            surface=args.surface,
-            tokens=args.tokens,
-            rounds=args.rounds,
             unverified=unverified,
+            **metadata,
         )
-    else:
-        report_path = Path(args.report or "run-report.json")
-        try:
-            with open(report_path, encoding="utf-8") as fh:
-                report = json.load(fh)
-        except (OSError, json.JSONDecodeError) as exc:
-            print(f"error: failed to read {report_path}: {exc}", file=sys.stderr)
-            return 1
-        raw_criteria = report.get("criteria", {})
-        if not isinstance(raw_criteria, dict) or not raw_criteria:
-            print("no criteria in report")
-            return 1
-        surface_val = args.surface or str(report.get("surface", ""))
-        summary, rc = score_criteria_map(
-            {str(k): bool(v) for k, v in raw_criteria.items()},
-            harness=str(report.get("harness", "?")),
-            model=str(report.get("model", "?")),
-            surface=surface_val,
-            tokens=report.get("tokens", "?"),
-            rounds=report.get("rounds", "?"),
-        )
+    except (OSError, ET.ParseError, ValueError) as exc:
+        print(f"error: failed to score {source}: {exc}", file=sys.stderr)
+        return 1
 
     if rc == 0 and args.json_out is not None:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)

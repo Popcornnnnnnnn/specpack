@@ -15,23 +15,13 @@ from pathlib import Path
 from typing import Any, Optional
 
 try:
-    from ._common import extract_criterion_ids, natural_id_key
-    from .score import score_criteria_map, score_junit_report
+    from ._common import natural_id_key
+    from .score import read_run_report, read_scoring_spec, score_criteria_map, score_junit_criteria
 except ImportError:
-    from _common import extract_criterion_ids, natural_id_key
-    from score import score_criteria_map, score_junit_report
+    from _common import natural_id_key
+    from score import read_run_report, read_scoring_spec, score_criteria_map, score_junit_criteria
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"}
-
-
-def _read_json(path: Path) -> Optional[dict[str, Any]]:
-    if not path.is_file():
-        return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else None
-    except (OSError, json.JSONDecodeError):
-        return None
 
 
 def _read_text(path: Path) -> str:
@@ -53,64 +43,69 @@ def _discover_run_dirs(runs_dir: Path) -> list[Path]:
     return dirs
 
 
-def _resolve_spec_path(runs_dir: Path, run_dirs: list[Path], explicit_spec: Optional[Path]) -> Optional[Path]:
+def _resolve_spec_path(
+    run_dir: Path, explicit_spec: Optional[Path], fallback_spec: Optional[Path]
+) -> Optional[Path]:
     if explicit_spec is not None:
-        return explicit_spec.resolve()
-    for d in run_dirs:
-        candidate = d / "pack" / "spec.md"
-        if candidate.is_file():
-            return candidate
-    fallback = runs_dir / "spec.md"
-    return fallback if fallback.is_file() else None
+        return explicit_spec
+    local_spec = run_dir / "pack" / "spec.md"
+    return local_spec if local_spec.is_file() else fallback_spec
 
 
 def _collect_run(run_dir: Path, spec_path: Optional[Path], html_dir: Path) -> dict[str, Any]:
-    meta = _read_json(run_dir / "run-meta.json") or {}
     deliverables = run_dir / "deliverables"
-    report = _read_json(deliverables / "run-report.json")
+    meta_path = run_dir / "run-meta.json"
+    report_path = deliverables / "run-report.json"
     junit_path = deliverables / "junit.xml"
 
-    harness = str((report or {}).get("harness") or meta.get("harness") or "?")
-    model = str((report or {}).get("model") or meta.get("model") or "?")
-    surface = str((report or {}).get("surface") or "").strip()
-    taste_mode = str(meta.get("taste_mode") or "?")
-    tokens = (report or {}).get("tokens", "?")
-    rounds = (report or {}).get("rounds", "?")
-
-    criteria: dict[str, bool] = {}
-    unverified: list[str] = []
-    passed = 0
-    total = int(meta.get("criteria_count") or 0)
-    pct: Optional[float] = None
+    meta: dict[str, Any] = {}
+    report: dict[str, Any] = {}
+    spec_ids: list[str] = []
+    summary: dict[str, Any] = {}
+    source = spec_path
     status = "PENDING"
+    error = ""
+    expected_total = 0
+    try:
+        if spec_path is not None:
+            spec_ids = read_scoring_spec(spec_path)
+            expected_total = len(spec_ids)
+        if meta_path.exists():
+            source = meta_path
+            data = json.loads(meta_path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("run metadata must be a JSON object")
+            meta = data
+            expected_total = expected_total or int(meta.get("criteria_count") or 0)
 
-    if report and isinstance(report.get("criteria"), dict) and report["criteria"]:
-        criteria = {str(k): bool(v) for k, v in report["criteria"].items()}
-        unverified = [str(x) for x in report.get("unverified", [])]
-        total = int(report.get("total") or len(criteria))
-        passed = int(report.get("passed") or sum(1 for v in criteria.values() if v))
-        pct = float(report.get("invariants_percent") or (100.0 * passed / total if total else 0.0))
-        status = "PASS" if total > 0 and passed == total and not unverified else "PARTIAL"
-    elif junit_path.is_file() and spec_path is not None:
-        try:
-            criteria, unverified = score_junit_report(junit_path, spec_path)
-            summary, rc = score_criteria_map(
-                criteria,
-                harness=harness,
-                model=model,
-                surface=surface,
-                tokens=tokens,
-                rounds=rounds,
-                unverified=unverified,
-                out_stream=io.StringIO(),
-            )
-            if rc == 0 and summary:
-                total = int(summary["total"])
-                passed = int(summary["passed"])
-                pct = float(summary["invariants_percent"])
-                status = "PASS" if total > 0 and passed == total and not unverified else "PARTIAL"
-        except (OSError, ET.ParseError, ValueError):
-            status = "PENDING"
+        criteria: Optional[dict[str, bool]] = None
+        unverified: list[str] = []
+        if report_path.exists():
+            source = report_path
+            report, criteria, unverified = read_run_report(report_path)
+            if spec_ids:
+                flagged = set(unverified)
+                unverified = [cid for cid in spec_ids if cid in flagged or cid not in criteria]
+                criteria = {cid: criteria[cid] for cid in spec_ids if cid in criteria}
+        elif junit_path.exists():
+            source = junit_path
+            if not spec_ids:
+                raise ValueError("JUnit scoring requires spec.md")
+            criteria, unverified = score_junit_criteria(junit_path, spec_ids)
+
+        if criteria is not None:
+            summary, rc = score_criteria_map(criteria, unverified=unverified, out_stream=io.StringIO())
+            if rc != 0:
+                raise ValueError("no criteria to score")
+            status = "PASS" if summary["passed"] == summary["total"] else "PARTIAL"
+    except (OSError, ET.ParseError, TypeError, ValueError, OverflowError) as exc:
+        status = "ERROR"
+        error = f"{source.name}: {exc}"
+
+    harness = str(report.get("harness") or meta.get("harness") or "?")
+    model = str(report.get("model") or meta.get("model") or "?")
+    surface = str(report.get("surface") or "").strip()
+    taste_mode = str(meta.get("taste_mode") or "?")
 
     screenshots: list[dict[str, str]] = []
     if deliverables.is_dir():
@@ -126,14 +121,16 @@ def _collect_run(run_dir: Path, spec_path: Optional[Path], html_dir: Path) -> di
         "model": model,
         "surface": surface or f"({taste_mode})",
         "taste_mode": taste_mode,
-        "tokens": tokens,
-        "rounds": rounds,
+        "tokens": report.get("tokens", "?"),
+        "rounds": report.get("rounds", "?"),
         "status": status,
-        "passed": passed,
-        "total": total,
-        "pct": pct,
-        "criteria": criteria,
-        "unverified": set(unverified),
+        "error": error,
+        "passed": summary.get("passed", 0),
+        "total": summary.get("total", expected_total),
+        "pct": summary.get("invariants_percent"),
+        "spec_ids": spec_ids,
+        "criteria": summary.get("criteria", {}),
+        "unverified": set(summary.get("unverified", [])),
         "screenshots": screenshots,
         "summary_md": _read_text(deliverables / "SUMMARY.md"),
         "taste_md": _read_text(deliverables / "TASTE.md"),
@@ -142,8 +139,10 @@ def _collect_run(run_dir: Path, spec_path: Optional[Path], html_dir: Path) -> di
 
 
 def _cell_state(run: dict[str, Any], cid: str) -> str:
-    if run["status"] == "PENDING":
-        return "PENDING"
+    if run["spec_ids"] and cid not in run["spec_ids"]:
+        return "—"
+    if run["status"] in {"PENDING", "ERROR"}:
+        return run["status"]
     if cid in run["unverified"] or cid not in run["criteria"]:
         return "UNVERIFIED"
     return "PASS" if run["criteria"][cid] else "FAIL"
@@ -162,11 +161,17 @@ def render_markdown(runs: list[dict[str, Any]], criterion_ids: list[str], pack_n
     ]
     for r in runs:
         pct_str = f"{r['pct']:.1f}%" if r["pct"] is not None else "—"
-        passed_str = f"{r['passed']}/{r['total']}" if r["status"] != "PENDING" else f"—/{r['total'] or '?'}"
+        passed_str = f"{r['passed']}/{r['total']}" if r["pct"] is not None else f"—/{r['total'] or '?'}"
         lines.append(
             f"| `{r['dir_name']}` | `{r['harness']}` | `{r['model']}` | **{r['status']}** | "
             f"{r['surface']} | {pct_str} | {passed_str} | {r['tokens']} | {r['rounds']} | {len(r['screenshots'])} |"
         )
+
+    errors = [r for r in runs if r["error"]]
+    if errors:
+        lines.extend(["", "## Scoring Errors", ""])
+        for r in errors:
+            lines.append(f"- `{r['dir_name']}` — {' '.join(r['error'].splitlines())}")
 
     if criterion_ids:
         lines.extend(["", "## Invariant Matrix", ""])
@@ -190,13 +195,14 @@ def _render_doc_details(title: str, content: str) -> str:
 
 
 def render_html(runs: list[dict[str, Any]], criterion_ids: list[str], pack_name: str, generated_at: str) -> str:
-    completed = sum(1 for r in runs if r["status"] != "PENDING")
+    completed = sum(1 for r in runs if r["pct"] is not None)
     cards_html: list[str] = []
 
     for r in runs:
         status_cls = r["status"].lower()
         pct_text = f"{r['pct']:.1f}%" if r["pct"] is not None else "—"
-        passed_text = f"{r['passed']}/{r['total']}" if r["status"] != "PENDING" else f"0/{r['total'] or '?'}"
+        passed_text = f"{r['passed']}/{r['total']}" if r["pct"] is not None else f"—/{r['total'] or '?'}"
+        error_html = f"<p>{html.escape(r['error'])}</p>" if r["error"] else ""
 
         if r["screenshots"]:
             thumbs = "".join(
@@ -232,6 +238,7 @@ def render_html(runs: list[dict[str, Any]], criterion_ids: list[str], pack_name:
     <div><dt>Tokens</dt><dd>{html.escape(str(r['tokens']))}</dd></div>
     <div><dt>Rounds</dt><dd>{html.escape(str(r['rounds']))}</dd></div>
   </dl>
+  {error_html}
   {gallery}
   <div class="docs">{details}</div>
 </article>"""
@@ -239,10 +246,8 @@ def render_html(runs: list[dict[str, Any]], criterion_ids: list[str], pack_name:
 
     matrix_rows: list[str] = []
     for cid in criterion_ids:
-        cells = "".join(
-            f'<td><span class="pill pill-{_cell_state(r, cid).lower()}">{_cell_state(r, cid)}</span></td>'
-            for r in runs
-        )
+        states = [_cell_state(r, cid) for r in runs]
+        cells = "".join(f'<td><span class="pill pill-{state.lower()}">{state}</span></td>' for state in states)
         matrix_rows.append(f"<tr><th><code>[{html.escape(cid)}]</code></th>{cells}</tr>")
 
     col_headers = "".join(f"<th>{html.escape(r['dir_name'])}</th>" for r in runs)
@@ -343,7 +348,7 @@ def render_html(runs: list[dict[str, Any]], criterion_ids: list[str], pack_name:
       font: 600 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.03em;
     }}
     .badge-pass, .pill-pass {{ background: var(--pass-bg); color: var(--pass-fg); }}
-    .badge-partial, .pill-fail {{ background: var(--fail-bg); color: var(--fail-fg); }}
+    .badge-partial, .badge-error, .pill-fail, .pill-error {{ background: var(--fail-bg); color: var(--fail-fg); }}
     .pill-unverified {{ background: var(--warn-bg); color: var(--warn-fg); }}
     .badge-pending, .pill-pending {{ background: var(--pend-bg); color: var(--pend-fg); }}
     .gallery {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }}
@@ -439,23 +444,24 @@ def compare_runs(
     if not run_dirs:
         raise ValueError(f"No trial run directories found in {runs_dir}")
 
-    resolved_spec = _resolve_spec_path(runs_dir, run_dirs, spec_path)
-    criterion_ids: list[str] = []
-    if resolved_spec is not None and resolved_spec.is_file():
-        criterion_ids, _ = extract_criterion_ids(resolved_spec)
-        criterion_ids.sort(key=natural_id_key)
+    explicit_spec = spec_path.resolve() if spec_path is not None else None
+    fallback_spec = next(
+        (p for p in [runs_dir / "spec.md", *(d / "pack" / "spec.md" for d in run_dirs)] if p.is_file()),
+        None,
+    )
 
     html_target = (html_out or (runs_dir / "comparison.html")).resolve()
     md_target = (md_out or (runs_dir / "COMPARISON.md")).resolve()
     html_target.parent.mkdir(parents=True, exist_ok=True)
     md_target.parent.mkdir(parents=True, exist_ok=True)
 
-    runs = [_collect_run(d, resolved_spec, html_target.parent) for d in run_dirs]
-    if not criterion_ids:
-        seen = set()
-        for r in runs:
-            seen.update(r["criteria"].keys())
-        criterion_ids = sorted(seen, key=natural_id_key)
+    runs = [
+        _collect_run(d, _resolve_spec_path(d, explicit_spec, fallback_spec), html_target.parent)
+        for d in run_dirs
+    ]
+    criterion_ids = sorted(
+        {cid for r in runs for cid in (r["spec_ids"] or r["criteria"])}, key=natural_id_key
+    )
 
     pack_name = next((r["pack"] for r in runs if r["pack"] and r["pack"] != "pack"), runs[0]["pack"])
     generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
