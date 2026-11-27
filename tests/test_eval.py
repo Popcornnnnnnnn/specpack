@@ -6,6 +6,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 from eval import _common, compare, prepare_run, score, validate
 
@@ -155,6 +156,45 @@ class TestScore(unittest.TestCase):
             self.assertIn("INVARIANTS: 2/5 = 40.0%", proc.stdout)
             self.assertIn("Failed criteria: 1.1, 1.10, 2.1", proc.stdout)
 
+    def test_json_rescore_keeps_unverified_and_honors_metadata_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report_path = Path(tmp) / "run-report.json"
+            out_path = Path(tmp) / "rescored.json"
+            report_path.write_text(json.dumps({
+                "harness": "original-harness",
+                "model": "original-model",
+                "surface": "TUI",
+                "tokens": 200,
+                "rounds": 4,
+                "criteria": {"1.1": True, "1.2": True},
+                "unverified": ["1.2", "1.3"],
+            }), encoding="utf-8")
+            self.assertEqual(score.main([
+                str(report_path), "--json-out", str(out_path),
+                "--harness", "new-harness", "--model", "new-model", "--surface", "",
+                "--tokens", "0", "--rounds", "0",
+            ]), 0)
+
+            rescored = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(rescored["unverified"], ["1.2", "1.3"])
+            self.assertEqual(rescored["criteria"], {"1.1": True, "1.2": False, "1.3": False})
+            self.assertEqual((rescored["passed"], rescored["total"]), (1, 3))
+            self.assertEqual(rescored["harness"], "new-harness")
+            self.assertEqual(rescored["model"], "new-model")
+            self.assertEqual(rescored["surface"], "")
+            self.assertEqual(rescored["tokens"], "0")
+            self.assertEqual(rescored["rounds"], "0")
+
+    def test_json_rescore_rejects_non_boolean_results(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report_path = Path(tmp) / "run-report.json"
+            out_path = Path(tmp) / "rescored.json"
+            for result in ("false", 0, 1, None):
+                with self.subTest(result=result):
+                    report_path.write_text(json.dumps({"criteria": {"1.1": result}}), encoding="utf-8")
+                    self.assertEqual(score.main([str(report_path), "--json-out", str(out_path)]), 1)
+                    self.assertFalse(out_path.exists())
+
     def test_junit_scoring_boundary_and_states(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -166,7 +206,7 @@ class TestScore(unittest.TestCase):
             # Criteria in spec.md: 1.1, 1.2, 2.1, 10.1, 1.10 (code-fenced 99.1 ignored!)
             junit_xml = """<?xml version="1.0" encoding="utf-8"?>
 <testsuites>
-  <testsuite name="suite" tests="6">
+  <testsuite name="suite" tests="9">
     <!-- Matches ONLY 1.10, must NOT satisfy 1.1 -->
     <testcase classname="tests.contract" name="test_1_10_empty_input" time="0.01"/>
     <!-- Matches ONLY 1.2 (passed across two testcases) -->
@@ -183,6 +223,9 @@ class TestScore(unittest.TestCase):
     </testcase>
     <!-- 2_1_1 must NOT falsely satisfy 1.1 -->
     <testcase classname="tests.contract" name="test_2_1_1_unrelated" time="0.01"/>
+    <!-- Protocol versions are not criterion evidence -->
+    <testcase classname="tests.contract" name="test_response[HTTP/1.1]" time="0.01"/>
+    <testcase classname="tests.contract" name="test_http_1_1_response" time="0.01"/>
   </testsuite>
 </testsuites>
 """
@@ -246,6 +289,23 @@ class TestValidate(unittest.TestCase):
             self.assertEqual(warnings, [])
             self.assertEqual(count, 5)
             self.assertEqual(validate.main([str(pack), "--strict"]), 0)
+
+    def test_nonfinite_budgets_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pack = Path(tmp) / "pack"
+            _write_clean_pack(pack)
+            manifest = pack / "pack.yaml"
+            manifest.write_text(
+                manifest.read_text(encoding="utf-8")
+                .replace("budget_days: 2", "budget_days: NaN")
+                .replace("budget_conversations: 30", "budget_conversations: Inf")
+                .replace("budget_tokens: 20000000", "budget_tokens: -Inf"),
+                encoding="utf-8",
+            )
+            errors, _, _ = validate.validate_pack(pack)
+            self.assertEqual(len(errors), 3)
+            for key in ("budget_days", "budget_conversations", "budget_tokens"):
+                self.assertTrue(any(f"regenerability.{key}" in error for error in errors))
 
     def test_legacy_golden_dir_warns_not_fails_non_strict(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -352,6 +412,75 @@ class TestValidate(unittest.TestCase):
 
 
 class TestTrialTools(unittest.TestCase):
+    def test_prepare_run_rejects_missing_required_file_and_nested_zip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pack = root / "pack"
+            out_dir = root / "runs" / "trial"
+            _write_clean_pack(pack)
+            argv = ["--pack", str(pack), "--out", str(out_dir), "--harness", "codex", "--model", "test"]
+
+            self.assertEqual(prepare_run.main([*argv, "--zip-out", str(out_dir / "bundle.zip")]), 1)
+            self.assertFalse(out_dir.parent.exists())
+            (pack / "decisions.md").unlink()
+            self.assertEqual(prepare_run.main(argv), 1)
+            self.assertFalse(out_dir.parent.exists())
+
+    def test_prepare_run_cleans_up_failed_git_init_and_bundle_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pack = root / "pack"
+            out_dir = root / "runs" / "trial"
+            zip_out = root / "bundles" / "trial.zip"
+            _write_clean_pack(pack)
+            zip_out.parent.mkdir()
+            zip_out.write_bytes(b"existing bundle")
+            argv = ["--pack", str(pack), "--out", str(out_dir), "--harness", "codex", "--model", "test"]
+
+            def fail_git(staged_run):
+                self.assertTrue((staged_run / "run-meta.json").is_file())
+                self.assertFalse(out_dir.exists())
+                self.assertEqual(compare._discover_run_dirs(out_dir.parent), [])
+                raise subprocess.CalledProcessError(1, ["git", "init"])
+
+            def fail_zip(staged_run, staged_zip):
+                self.assertTrue((staged_run / "deliverables").is_dir())
+                self.assertFalse(out_dir.exists())
+                self.assertEqual(compare._discover_run_dirs(out_dir.parent), [])
+                staged_zip.write_bytes(b"partial zip")
+                raise OSError("bundle write failed")
+
+            with patch.object(prepare_run, "_init_git_repo", side_effect=fail_git):
+                self.assertEqual(prepare_run.main([*argv, "--git-init"]), 1)
+            self.assertEqual(list(out_dir.parent.iterdir()), [])
+
+            with patch.object(prepare_run, "_write_zip_bundle", side_effect=fail_zip):
+                self.assertEqual(prepare_run.main([*argv, "--zip-out", str(zip_out)]), 1)
+            self.assertEqual(list(out_dir.parent.iterdir()), [])
+            self.assertEqual(list(zip_out.parent.iterdir()), [zip_out])
+            self.assertEqual(zip_out.read_bytes(), b"existing bundle")
+
+            self.assertEqual(prepare_run.main([*argv, "--zip-out", str(zip_out)]), 0)
+            self.assertEqual(compare._discover_run_dirs(out_dir.parent), [out_dir])
+            self.assertTrue(zipfile.is_zipfile(zip_out))
+
+    def test_prepare_run_rolls_back_if_bundle_publication_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pack = root / "pack"
+            out_dir = root / "runs" / "trial"
+            zip_out = root / "trial.zip"
+            _write_clean_pack(pack)
+            zip_out.mkdir()
+
+            self.assertEqual(prepare_run.main([
+                "--pack", str(pack), "--out", str(out_dir), "--harness", "codex",
+                "--model", "test", "--zip-out", str(zip_out),
+            ]), 1)
+            self.assertEqual(list(out_dir.parent.iterdir()), [])
+            self.assertTrue(zip_out.is_dir())
+            self.assertEqual(list(root.glob(".specpack-*")), [])
+
     def test_prepare_run_creates_clean_git_trial_and_zip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -486,6 +615,88 @@ class TestTrialTools(unittest.TestCase):
             self.assertIn("91.7%", md_text)
             self.assertIn("FAIL", md_text)
             self.assertIn("PENDING", md_text)
+
+    def test_compare_reconciles_json_against_spec_and_ignores_summary_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runs_dir = Path(tmp)
+            run = runs_dir / "run-json"
+            deliverables = run / "deliverables"
+            deliverables.mkdir(parents=True)
+            spec = run / "pack" / "spec.md"
+            spec.parent.mkdir()
+            spec.write_text("- [1.1] First\n- [1.2] Second\n- [1.3] Third\n", encoding="utf-8")
+            report = deliverables / "run-report.json"
+            report.write_text(json.dumps({
+                "criteria": {"1.1": True, "1.2": False, "99.1": True},
+                "passed": 3,
+                "total": 3,
+                "invariants_percent": 100.0,
+                "unverified": None,
+            }), encoding="utf-8")
+
+            _, md_path = compare.compare_runs(runs_dir)
+            markdown = md_path.read_text(encoding="utf-8")
+            self.assertIn("**PARTIAL**", markdown)
+            self.assertIn("33.3% | 1/3", markdown)
+            self.assertIn("`[1.1]` | PASS", markdown)
+            self.assertIn("`[1.2]` | FAIL", markdown)
+            self.assertIn("`[1.3]` | UNVERIFIED", markdown)
+            self.assertNotIn("99.1", markdown)
+
+    def test_compare_reports_corrupt_evidence_as_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runs_dir = Path(tmp)
+            spec = runs_dir / "spec.md"
+            spec.write_text("- [1.1] First\n", encoding="utf-8")
+            evidence = {
+                "bad-json": ("run-report.json", "{"),
+                "bad-boolean": ("run-report.json", '{"criteria": {"1.1": "false"}}'),
+                "bad-xml": ("junit.xml", "<testsuite>"),
+                "bad-junit": ("junit.xml", "<document/>"),
+                "bad-spec": ("junit.xml", '<testsuite><testcase name="[1.1]"/></testsuite>'),
+            }
+            for name, (filename, contents) in evidence.items():
+                deliverables = runs_dir / name / "deliverables"
+                deliverables.mkdir(parents=True)
+                (deliverables / filename).write_text(contents, encoding="utf-8")
+            bad_spec = runs_dir / "bad-spec" / "pack" / "spec.md"
+            bad_spec.parent.mkdir()
+            bad_spec.write_text("- [1.1] First\n- [1.1] Duplicate\n", encoding="utf-8")
+            (runs_dir / "bad-json" / "deliverables" / "junit.xml").write_text(
+                '<testsuite><testcase name="[1.1]"/></testsuite>', encoding="utf-8"
+            )
+
+            html_path, md_path = compare.compare_runs(runs_dir)
+            markdown = md_path.read_text(encoding="utf-8")
+            for run in evidence:
+                self.assertIn(f"| `{run}` | `?` | `?` | **ERROR** |", markdown)
+            self.assertIn("must have a boolean result", markdown)
+            self.assertIn("Duplicate criterion IDs", markdown)
+            self.assertIn("0/5 runs scored", html_path.read_text(encoding="utf-8"))
+
+    def test_compare_scores_junit_against_each_runs_local_spec(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runs_dir = Path(tmp)
+            (runs_dir / "spec.md").write_text("- [1.3] Batch fallback\n", encoding="utf-8")
+            for name, cid in (("first", "1.1"), ("second", "1.2"), ("fallback", "1.3")):
+                run = runs_dir / name
+                deliverables = run / "deliverables"
+                deliverables.mkdir(parents=True)
+                if name != "fallback":
+                    spec = run / "pack" / "spec.md"
+                    spec.parent.mkdir()
+                    spec.write_text(f"- [{cid}] Local criterion\n", encoding="utf-8")
+                (deliverables / "junit.xml").write_text(
+                    f'<testsuite><testcase name="[{cid}]"/></testsuite>', encoding="utf-8"
+                )
+
+            _, md_path = compare.compare_runs(runs_dir)
+            markdown = md_path.read_text(encoding="utf-8")
+            for name in ("first", "second", "fallback"):
+                self.assertIn(f"| `{name}` | `?` | `?` | **PASS** | (?) | 100.0% | 1/1", markdown)
+            self.assertIn("| `[1.1]` | — | PASS | — |", markdown)
+            self.assertIn("| `[1.2]` | — | — | PASS |", markdown)
+            self.assertIn("| `[1.3]` | PASS | — | — |", markdown)
 
 
 if __name__ == "__main__":

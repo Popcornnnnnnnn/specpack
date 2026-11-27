@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import re
 import sys
 from pathlib import Path
@@ -141,10 +142,10 @@ def validate_pack(pack_dir: Path) -> tuple[list[str], list[str], int]:
             raw_val = regen.get(bkey, "")
             try:
                 num = float(raw_val)
-                if num <= 0:
+                if not math.isfinite(num) or num <= 0:
                     raise ValueError
             except ValueError:
-                errors.append(f"pack.yaml regenerability.{bkey} must be a positive number.")
+                errors.append(f"pack.yaml regenerability.{bkey} must be a finite positive number.")
 
     skill_path = pack_dir / "SKILL.md"
     if skill_path.is_file():

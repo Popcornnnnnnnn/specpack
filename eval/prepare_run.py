@@ -5,21 +5,19 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 try:
-    from ._common import extract_criterion_ids
-    from .validate import _parse_pack_yaml
+    from .validate import _parse_pack_yaml, validate_pack
 except ImportError:
-    from _common import extract_criterion_ids
-    from validate import _parse_pack_yaml
+    from validate import _parse_pack_yaml, validate_pack
 
 EVAL_DIR = Path(__file__).resolve().parent
 IGNORE_NAMES = {"__pycache__", ".DS_Store"}
@@ -192,34 +190,23 @@ def prepare_trial(
     pack_dir = pack_dir.resolve()
     out_dir = out_dir.resolve()
 
-    pack_yaml = pack_dir / "pack.yaml"
-    spec_md = pack_dir / "spec.md"
-    if not pack_yaml.is_file() or not spec_md.is_file():
-        raise FileNotFoundError(f"Pack directory must contain pack.yaml and spec.md: {pack_dir}")
+    errors, _, criteria_count = validate_pack(pack_dir)
+    if errors:
+        raise ValueError("Invalid pack:\n" + "\n".join(errors))
+    if criteria_count == 0:
+        raise ValueError(f"No bracketed criteria found in {pack_dir / 'spec.md'}")
 
+    if out_dir.is_relative_to(pack_dir):
+        raise ValueError("--out must be outside the source pack.")
     if out_dir.exists() and any(out_dir.iterdir()):
         raise FileExistsError(f"Destination directory already exists and is non-empty: {out_dir}")
+    if zip_out is not None:
+        zip_out = zip_out.resolve()
+        if zip_out.is_relative_to(out_dir):
+            raise ValueError("--zip-out must be outside --out.")
 
-    spec_ids, duplicates = extract_criterion_ids(spec_md)
-    if duplicates:
-        raise ValueError(f"Duplicate criterion IDs in {spec_md}: {', '.join(duplicates)}")
-    if not spec_ids:
-        raise ValueError(f"No bracketed criteria found in {spec_md}")
-
-    top_meta, _ = _parse_pack_yaml(pack_yaml)
+    top_meta, _ = _parse_pack_yaml(pack_dir / "pack.yaml")
     pack_name = top_meta.get("name") or pack_dir.name
-
-    out_dir.mkdir(parents=True, exist_ok=True)
-    _copy_filtered_tree(pack_dir, out_dir / "pack")
-    _copy_filtered_tree(EVAL_DIR, out_dir / "eval")
-
-    for subdir in ("app", "deliverables"):
-        d = out_dir / subdir
-        d.mkdir(parents=True, exist_ok=True)
-        (d / ".gitkeep").write_text("", encoding="utf-8")
-
-    (out_dir / ".gitignore").write_text(DEFAULT_GITIGNORE, encoding="utf-8")
-
     created_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     run_meta = {
         "pack": pack_name,
@@ -227,24 +214,47 @@ def prepare_trial(
         "model": model,
         "taste_mode": taste_mode,
         "created_at": created_at,
-        "criteria_count": len(spec_ids),
+        "criteria_count": criteria_count,
     }
-    (out_dir / "run-meta.json").write_text(json.dumps(run_meta, indent=2) + "\n", encoding="utf-8")
 
     prompt_text = _render_handoff_prompt(
         pack_name=pack_name,
         harness=harness,
         model=model,
         taste_mode=taste_mode,
-        criteria_count=len(spec_ids),
+        criteria_count=criteria_count,
     )
-    (out_dir / "HANDOFF_PROMPT.md").write_text(prompt_text, encoding="utf-8")
+    out_dir.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".specpack-", dir=out_dir.parent) as staging:
+        staged_run = Path(staging) / "run"
+        _copy_filtered_tree(pack_dir, staged_run / "pack")
+        _copy_filtered_tree(EVAL_DIR, staged_run / "eval")
 
-    if git_init:
-        _init_git_repo(out_dir)
+        for subdir in ("app", "deliverables"):
+            d = staged_run / subdir
+            d.mkdir()
+            (d / ".gitkeep").write_text("", encoding="utf-8")
 
-    if zip_out is not None:
-        _write_zip_bundle(out_dir, zip_out.resolve())
+        (staged_run / ".gitignore").write_text(DEFAULT_GITIGNORE, encoding="utf-8")
+        (staged_run / "run-meta.json").write_text(json.dumps(run_meta, indent=2) + "\n", encoding="utf-8")
+        (staged_run / "HANDOFF_PROMPT.md").write_text(prompt_text, encoding="utf-8")
+
+        if git_init:
+            _init_git_repo(staged_run)
+
+        if zip_out is None:
+            staged_run.rename(out_dir)
+        else:
+            zip_out.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix=".specpack-", dir=zip_out.parent) as bundle_staging:
+                staged_zip = Path(bundle_staging) / "bundle.zip"
+                _write_zip_bundle(staged_run, staged_zip)
+                staged_run.rename(out_dir)
+                try:
+                    staged_zip.replace(zip_out)
+                except OSError:
+                    out_dir.rename(staged_run)
+                    raise
 
     return run_meta
 
